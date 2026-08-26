@@ -5,3 +5,9 @@ Afflication of information technology, data science, and computational modeling 
 A category in the field of "Climate Informatics"
 
 Mechanics of Glacier using Stokes Law
+
+Query Distillation and Weighted Allocation of Glacio-Mechanics
+
+Graph Neural Network of the Concepts in Glacial Physics
+
+Microtransformer to contruct path between source concept and target concepts
