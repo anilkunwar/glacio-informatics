@@ -1,0 +1,4 @@
+TITLE-ABS-KEY ( ( glacier* OR glaciolog* OR "ice sheet*" OR "ice shelf" OR "ice stream*" ) AND ( model* OR simulat* OR numeric* OR computational OR "finite element" OR Stokes OR equation OR solver ) AND ( ( rheolog* OR "Glen*'s flow law" OR Arrhenius OR viscosit* OR anisotrop* OR "damage mechanic*" OR "ice fabric" ) OR ( "basal slid*" OR subglacial OR "friction law" OR Weertman OR Coulomb OR Budd OR "effective pressure" OR "grounding line" OR "contact problem" ) OR ( ParStokes OR precondition* OR mesh* OR remesh* OR GMSH OR adjoint OR "shallow shelf" OR SSA OR "shallow ice" OR SIA ) OR ( thermodynam* OR enthalpy OR calving OR crevasse* OR "surface mass balance" OR "basal melt*" ) ) )
+
+
+7,476  Results
