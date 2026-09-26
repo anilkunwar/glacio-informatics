@@ -1,0 +1,145 @@
+!echo on
+Header
+  !CHECK KEYWORDS Warn
+  Mesh DB "." "testglacier_3D"  ! Ensure your 3D mesh folder is named this
+  Include Path ""
+  Results Directory ""
+End
+
+Simulation
+  Max Output Level = 4
+  Coordinate System = "Cartesian 3D"   ! Changed to 3D
+  Coordinate Mapping(3) = 1 2 3
+  Simulation Type = "Steady"
+  Steady State Max Iterations = 1
+  Output Intervals = 1
+  Output File = "Stokes_ELA400_3D_diagnostic.result"
+  Post File = "Stokes_ELA400_3D_diagnostic.vtu"
+  Initialize Dirichlet Conditions = Logical False
+End
+
+Constants
+  Stefan Boltzmann = 5.67e-08
+End
+
+Body 1
+  Name = "Glacier"
+  Body Force = 1
+  Equation = 1
+  Material = 1
+  Initial Condition = 1
+End
+
+Equation 1
+  Name = "Equation1"
+  Convection = "computed"
+  Flow Solution Name = String "Flow Solution"
+  Active Solvers(3) = 1 2 3
+End
+
+Initial Condition 1
+  Velocity 1 = 0.0
+  Velocity 2 = 0.0
+  Velocity 3 = 0.0   ! Added Z-velocity
+  Pressure = 0.0
+  Depth = Real 0.0
+End
+
+! maps DEM's at the very beginning to the 3D cuboid mesh
+Solver 1
+  Exec Solver = "before Simulation"
+  Equation = "MapCoordinate"
+  Procedure = "StructuredMeshMapper" "StructuredMeshMapper"
+  Active Coordinate = Integer 3  ! Now updating the Z-direction (3rd coordinate)
+  Mesh Velocity Variable = String "Mesh Velocity 3"
+  Mesh Velocity First Zero = Logical True
+  Dot Product Tolerance = Real 0.01
+End
+
+! Flow Depth for postprocessing
+Solver 2
+  Equation = "HeightDepth"
+  Procedure = "StructuredProjectToPlane" "StructuredProjectToPlane"
+  Active Coordinate = Integer 3  ! Project onto the Z-plane
+  Operator 1 = depth
+  Operator 2 = height
+End
+
+! The 3D Stokes solver
+Solver 3
+  Equation = "Navier-Stokes"
+  Optimize Bandwidth = Logical True
+  Linear System Solver = Direct
+  Linear System Direct Method = "UMFPACK"     
+  Linear System Max Iterations = 5000
+  Linear System Convergence Tolerance = 1.0E-06
+  Linear System Abort Not Converged = False
+  Linear System Preconditioning = "ILU1"
+  Linear System Residual Output = 1
+  Flow Model = Stokes
+
+  Steady State Convergence Tolerance = 1.0E-05
+  Stabilization Method = Stabilized
+
+  Nonlinear System Convergence Tolerance = 1.0E-04
+  Nonlinear System Convergence Measure = Solution
+  Nonlinear System Max Iterations = 50
+  Nonlinear System Newton After Iterations = 3
+  Nonlinear System Newton After Tolerance =  1.0E-01
+  Exported Variable 1 = -dofs 3 "Mesh Velocity" 
+End
+
+! We use m-yr-MPa system
+Material 1
+  Name = "ice"
+  Density = Real $910.0*1.0E-06*(31556926.0)^(-2.0)
+  Viscosity Model = String "Glen"
+  Viscosity = Real 1.0 
+  Glen Exponent = Real 3.0
+  Critical Shear Rate = Real 1.0e-10
+  Rate Factor 1 = Real 1.258e13  
+  Rate Factor 2 = Real 6.046e28
+  Activation Energy 1 = Real 60e3
+  Activation Energy 2 = Real 139e3  
+  Glen Enhancement Factor = Real 1.0
+  Limit Temperature = Real -10.0
+  Constant Temperature = Real -3.0
+End
+
+Body Force 1
+  Name = "BodyForce1"
+  Flow BodyForce 1 = Real 0.0                          
+  Flow BodyForce 2 = Real 0.0
+  Flow BodyForce 3 = Real $-9.81 * (31556926.0)^(2.0)  ! Gravity now acts in the Z-direction
+End
+
+! Bedrock (Bottom boundary)
+Boundary Condition 1
+  Name = "bedrock"
+  Target Boundaries = 1
+  Bottom Surface = Variable Coordinate 1, Coordinate 2  ! Uses both X and Y
+    Real cubic
+       include  "steady_ELA400_bedrock_3D.dat" 
+  End
+  Velocity 1 = Real 0.0e0
+  Velocity 2 = Real 0.0e0
+  Velocity 3 = Real 0.0e0   ! No-slip in 3D
+End
+
+! Lateral Walls (Combined left, right, front, back)
+Boundary Condition 2
+  Name = "sides"
+  Target Boundaries(4) = 3 4 5 6   ! 4 side walls in a 3D cuboid
+  Velocity 1 = Real 0.0e0          ! No flow in X
+  Velocity 2 = Real 0.0e0          ! No flow in Y
+End
+
+! Surface (Top boundary)
+Boundary Condition 3
+  Name = "surface"
+  Target Boundaries = 2
+  Top Surface = Variable Coordinate 1, Coordinate 2   ! Uses both X and Y
+    Real cubic
+       include  "steady_ELA400_surface_3D.dat" 
+  End
+End
