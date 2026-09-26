@@ -6,5 +6,5 @@ SIF Generator:
 
 [![computational-glaciology](https://img.shields.io/badge/cg-v0-red)](https://glacier-mechanics-stokes-flow1.streamlit.app/) ( The app is an adaptation of the Stokes_diagnostic.sif : https://github.com/anilkunwar/ElmerIceCourses/blob/main/Testglacier-flowline/Stokes_diagnostic.sif )
 
-[![computational-glaciology](https://img.shields.io/badge/cg-v0-yellow)](https://glacier-bedrock-mechanics-stokes-flow2.streamlit.app/) ( The app is an adaptation of the Stokes_diagnostic.sif with an enhancement for including a 3D mesh: https://github.com/anilkunwar/ElmerIceCourses/blob/main/Testglacier-flowline/Stokes_diagnostic.sif )
+[![computational-glaciology](https://img.shields.io/badge/cg-v0-yellow)](https://glacier-bedrock-mechanics-stokes-flow2.streamlit.app/) ( The app is an adaptation of the Stokes_diagnostic.sif with an enhancement for including a 2D mesh: https://github.com/anilkunwar/ElmerIceCourses/blob/main/Testglacier-flowline/Stokes_diagnostic.sif )
 
