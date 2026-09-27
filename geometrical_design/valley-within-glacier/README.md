@@ -2,6 +2,7 @@
 
  The Python pre-deformation method of a regular grid  is the industry standard for real glacier simulations because it allows the researchers to use actual GIS/DEM raster data.
  The deformation r1 and r2 are performed on the base glacier3D.grd file. 
+ The mesh deformation is performed only on mesh.nodes file , and so the mesh.boundary, mesh.elements and mesh.header files remain unchanged.
 
 [![continuummodelnt2d](https://img.shields.io/badge/md1-streamlit-red)](https://mesh-deformer1.streamlit.app/ )  (Performs the mesh-preprocessing ( deformation ) along the Y-axis, for a predefined X-Z information)
 
