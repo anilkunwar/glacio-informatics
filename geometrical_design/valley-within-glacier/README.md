@@ -6,5 +6,8 @@
 
 [![continuummodelnt2d](https://img.shields.io/badge/md1-streamlit-red)](https://mesh-deformer1.streamlit.app/ )  (Performs the mesh-preprocessing ( deformation ) along the Y-axis, for a predefined X-Z information)
 
-[![continuummodelnt2d](https://img.shields.io/badge/md2-streamlit-red)](https://mesh-deformer2.streamlit.app/ )  (Performs the deformation/mesh pre-processing along the Y-axis, for a predefined X-Z information, Computes the elevation angle or slope)
+[![continuummodelnt2d](https://img.shields.io/badge/md2-streamlit-red)](https://mesh-deformer2.streamlit.app/ )  (Performs the deformation/mesh pre-processing along the Y-axis, for a predefined X-Z information, Nodes identical e.g. 10303 -1 0 650 0.0000, and 11374 -1 0 650 0.0000, Computes the elevation angle or slope)
+
+
+[![continuummodelnt2d](https://img.shields.io/badge/md3-streamlit-red)](https://mesh-deformer3.streamlit.app/ )  (Enables the deformed-hardening in the mesh.nodes so that each mesh is identical, this again will not be compatible with StructuredProjectToPlane solver, Performs the deformation/mesh pre-processing along the Y-axis, for a predefined X-Z information, Computes the elevation angle or slope)
 
