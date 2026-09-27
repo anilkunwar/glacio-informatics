@@ -1,7 +1,7 @@
 !echo on
 Header
   !CHECK KEYWORDS Warn
-  Mesh DB "." "glacier"
+  Mesh DB "." "glacier3D"
   Include Path ""
   Results Directory ""
 End
