@@ -43,7 +43,7 @@ if st.button("🔄 Reload Data", key="reload_data_btn"):
 # ==========================================
 @st.cache_data
 def load_data():
-    dat_files = glob.glob(os.path.join(DAT_DIR, "*.dat"))
+    dat_files = sorted(glob.glob(os.path.join(DAT_DIR, "*.dat")))
     mesh_nodes_file = os.path.join(MESH_DIR, "mesh.nodes")
 
     dat_files_found = len(dat_files)
@@ -94,13 +94,73 @@ if dat_files_found > 0 and mesh_found:
 
     nodes_orig = read_mesh(mesh_nodes_file)
 
+    # ==========================================
+    # 3b. Intuitive .dat file auto-detection
+    # ==========================================
+    # Before the user sees the sidebar, scan the discovered .dat files and
+    # try to guess which one is the surface profile and which is the bedrock
+    # profile. Streamlit's `selectbox` defaults to the first element in the
+    # list, and because `bedrock` sorts before `surface` alphabetically, the
+    # original version silently loaded the bedrock file into *both* dropdowns
+    # — which is why the 1D plot only ever showed one trace.
+    #
+    # We look for the substrings "surface" and "bedrock" (case-insensitive)
+    # anywhere in the basename. The user is still free to override either
+    # choice with the sidebar; we're only picking a smarter default.
+
+    def _find_default(files, keyword, fallback_idx=0):
+        """Return the index of the first file whose basename contains `keyword`."""
+        for i, f in enumerate(files):
+            if keyword in os.path.basename(f).lower():
+                return i
+        return fallback_idx if files else 0
+
+    # A slightly more robust heuristic: prefer the *last* matching file if
+    # several exist, since filenames like `steady_ELA400_surface.dat` should
+    # beat a stray `old_surface.dat`.
+    surface_candidates = [i for i, f in enumerate(dat_files)
+                          if "surface" in os.path.basename(f).lower()]
+    bedrock_candidates = [i for i, f in enumerate(dat_files)
+                          if "bedrock" in os.path.basename(f).lower()]
+
+    surf_idx = surface_candidates[0] if surface_candidates else _find_default(dat_files, "surface")
+    bed_idx = bedrock_candidates[0] if bedrock_candidates else _find_default(dat_files, "bedrock", fallback_idx=min(1, len(dat_files) - 1))
+
+    # Final guard: never let both dropdowns point at the same file by default
+    # unless there's literally only one .dat in the directory.
+    if len(dat_files) > 1 and surf_idx == bed_idx:
+        # Push the bedrock default to a different file so the two traces are distinct.
+        bed_idx = (surf_idx + 1) % len(dat_files)
+
     st.sidebar.header("📂 File Selection")
+
     surface_file = st.sidebar.selectbox(
-        "Surface Profile (.dat)", dat_files, key="surface_file_select"
+        "Surface Profile (.dat)",
+        dat_files,
+        index=surf_idx,
+        key="surface_file_select",
+        help="Auto-detected from the filename (looks for 'surface'). Override if needed.",
     )
     bedrock_file = st.sidebar.selectbox(
-        "Bedrock Profile (.dat)", dat_files, key="bedrock_file_select"
+        "Bedrock Profile (.dat)",
+        dat_files,
+        index=bed_idx,
+        key="bedrock_file_select",
+        help="Auto-detected from the filename (looks for 'bedrock'). Override if needed.",
     )
+
+    # Small in-sidebar confirmation so the user can see at a glance that the
+    # two dropdowns are actually pointing at different files.
+    st.sidebar.caption(
+        f"Surface → `{os.path.basename(surface_file)}`  \n"
+        f"Bedrock → `{os.path.basename(bedrock_file)}`"
+    )
+
+    if os.path.abspath(surface_file) == os.path.abspath(bedrock_file):
+        st.sidebar.warning(
+            "⚠️ Surface and bedrock point at the *same* file. "
+            "Pick different profiles to see both traces."
+        )
 
     surface_df = read_dat(surface_file)
     bedrock_df = read_dat(bedrock_file)
@@ -169,7 +229,7 @@ if dat_files_found > 0 and mesh_found:
         # interpolation edges, or when the trench/gaussian features push the
         # bedrock up past the interpolated surface. Enforcing a strictly positive
         # minimum thickness guarantees every vertical layer retains a distinct Z.
-        min_thickness = 0.1  # 10 cm minimum ice thickness (metres)
+        min_thickness = float(params.get('min_thickness', 0.1))
 
         raw_thickness = new_top - new_bottom
         new_top = np.where(
@@ -326,9 +386,21 @@ if dat_files_found > 0 and mesh_found:
             st.plotly_chart(fig, width="stretch")
         with col2:
             st.subheader("1D Flowline Profiles (.dat)")
+            st.caption(
+                f"Surface: `{os.path.basename(surface_file)}` · "
+                f"Bedrock: `{os.path.basename(bedrock_file)}`"
+            )
             fig2d = go.Figure()
-            fig2d.add_trace(go.Scatter(x=surface_df['X'], y=surface_df['Z'], name='Surface', line=dict(color='blue')))
-            fig2d.add_trace(go.Scatter(x=bedrock_df['X'], y=bedrock_df['Z'], name='Bedrock', line=dict(color='brown')))
+            fig2d.add_trace(go.Scatter(
+                x=surface_df['X'], y=surface_df['Z'],
+                name=f"Surface ({os.path.basename(surface_file)})",
+                line=dict(color='blue'),
+            ))
+            fig2d.add_trace(go.Scatter(
+                x=bedrock_df['X'], y=bedrock_df['Z'],
+                name=f"Bedrock ({os.path.basename(bedrock_file)})",
+                line=dict(color='brown'),
+            ))
             fig2d.update_layout(xaxis_title="Distance X (m)", yaxis_title="Elevation Z (m)")
             st.plotly_chart(fig2d, width="stretch")
 
