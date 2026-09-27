@@ -1,6 +1,7 @@
 # The solver run converges perfectly 
 
 The deformation hardening methodology applied in https://mesh-deformer3.streamlit.app/ (md3 app), ensures the uniqueness of each nodes even in the aftermath of bedrock deformation.
+For this model, the U-Valley (Parabolic) profile is chosen along Y-direction.
 
 # Limitation
 
