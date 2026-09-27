@@ -45,10 +45,10 @@ if st.button("🔄 Reload Data"):
 def load_data():
     dat_files = glob.glob(os.path.join(DAT_DIR, "*.dat"))
     mesh_nodes_file = os.path.join(MESH_DIR, "mesh.nodes")
-    
+
     dat_files_found = len(dat_files)
     mesh_found = os.path.exists(mesh_nodes_file)
-    
+
     return dat_files, mesh_nodes_file, dat_files_found, mesh_found
 
 dat_files, mesh_nodes_file, dat_files_found, mesh_found = load_data()
@@ -67,51 +67,81 @@ else:
 # 3. Main App Logic (Only runs if files are found)
 # ==========================================
 if dat_files_found > 0 and mesh_found:
-    
+
     @st.cache_data
     def read_mesh(filepath):
-        return pd.read_csv(filepath, sep='\s+', header=None, names=['ID', 'Flag', 'X', 'Y', 'Z'])
+        # Use the Python engine + explicit regex separator for robust whitespace parsing.
+        # Return a fresh copy so mutation-heavy downstream code can't poison the cache.
+        df = pd.read_csv(
+            filepath,
+            sep=r"\s+",
+            header=None,
+            names=['ID', 'Flag', 'X', 'Y', 'Z'],
+            engine="python",
+        )
+        return df.copy()
 
     @st.cache_data
     def read_dat(filepath):
-        return pd.read_csv(filepath, sep='\s+', header=None, names=['X', 'Z'])
+        df = pd.read_csv(
+            filepath,
+            sep=r"\s+",
+            header=None,
+            names=['X', 'Z'],
+            engine="python",
+        )
+        return df.copy()
 
     nodes_orig = read_mesh(mesh_nodes_file)
-    
+
     st.sidebar.header("📂 File Selection")
     surface_file = st.sidebar.selectbox("Surface Profile (.dat)", dat_files)
     bedrock_file = st.sidebar.selectbox("Bedrock Profile (.dat)", dat_files)
-    
+
     surface_df = read_dat(surface_file)
     bedrock_df = read_dat(bedrock_file)
 
     # ==========================================
-    # 4. Deformation Logic (with Joblib)
+    # 4. Deformation Logic
     # ==========================================
     def deform_chunk(chunk, bedrock, surface, profile_type, params):
-        x_mesh = chunk['X'].values
-        y_mesh = chunk['Y'].values
-        
-        z_bed_interp = np.interp(x_mesh, bedrock['X'], bedrock['Z'])
-        z_surf_interp = np.interp(x_mesh, surface['X'], surface['Z'])
-        
+        # ---- Defensive hardening ----------------------------------------
+        if not isinstance(chunk, pd.DataFrame):
+            raise TypeError(f"deform_chunk expected DataFrame, got {type(chunk)}")
+        if chunk.empty:
+            return chunk
+        # -----------------------------------------------------------------
+
+        x_mesh = chunk['X'].to_numpy()
+        y_mesh = chunk['Y'].to_numpy()
+
+        z_bed_interp = np.interp(x_mesh, bedrock['X'].to_numpy(), bedrock['Z'].to_numpy())
+        z_surf_interp = np.interp(x_mesh, surface['X'].to_numpy(), surface['Z'].to_numpy())
+
         y_center = params.get('y_center', 500.0)
         y_max = chunk['Y'].max() if 'Y' in chunk else 1000.0
-        
+
         if profile_type == "U-Valley (Parabolic)":
             steepness = params.get('steepness', 0.0003)
-            y_var = steepness * (y_mesh - y_center)**2
+            y_var = steepness * (y_mesh - y_center) ** 2
         elif profile_type == "V-Valley (Linear)":
             steepness = params.get('steepness', 0.05)
             y_var = steepness * np.abs(y_mesh - y_center)
         elif profile_type == "Lateral Moraines":
             sigma = params.get('width', 100.0)
             height = params.get('height', 50.0)
-            y_var = height * (np.exp(-((y_mesh - 50)**2)/(2*sigma**2)) + np.exp(-((y_mesh - (y_max-50))**2)/(2*sigma**2)))
+            y_var = height * (
+                np.exp(-((y_mesh - 50) ** 2) / (2 * sigma ** 2))
+                + np.exp(-((y_mesh - (y_max - 50)) ** 2) / (2 * sigma ** 2))
+            )
         elif profile_type == "Asymmetric Valley":
             s_left = params.get('steepness_left', 0.0002)
             s_right = params.get('steepness_right', 0.0005)
-            y_var = np.where(y_mesh < y_center, s_left * (y_mesh - y_center)**2, s_right * (y_mesh - y_center)**2)
+            y_var = np.where(
+                y_mesh < y_center,
+                s_left * (y_mesh - y_center) ** 2,
+                s_right * (y_mesh - y_center) ** 2,
+            )
         else:
             y_var = np.zeros_like(y_mesh)
 
@@ -119,16 +149,17 @@ if dat_files_found > 0 and mesh_found:
             trench_center = params.get('trench_x', 1500.0)
             trench_width = params.get('trench_w', 200.0)
             trench_depth = params.get('trench_d', 50.0)
-            x_var = -trench_depth * np.exp(-((x_mesh - trench_center)**2)/(2*trench_width**2))
-            z_bed_interp += x_var
-            z_surf_interp += x_var * 0.2 
-            
+            x_var = -trench_depth * np.exp(-((x_mesh - trench_center) ** 2) / (2 * trench_width ** 2))
+            z_bed_interp = z_bed_interp + x_var
+            z_surf_interp = z_surf_interp + x_var * 0.2
+
         new_bottom = z_bed_interp + y_var
         new_top = z_surf_interp + y_var
-        
+
         z_max_orig = params.get('z_max_orig', 5.0)
         z_normalized = chunk['Z'] / z_max_orig if z_max_orig > 0 else 0
-        
+
+        chunk = chunk.copy()
         chunk['Z_new'] = new_bottom + z_normalized * (new_top - new_bottom)
         return chunk
 
@@ -137,7 +168,7 @@ if dat_files_found > 0 and mesh_found:
     # ==========================================
     st.sidebar.header("⛰️ Y-Direction Variation")
     profile_type = st.sidebar.selectbox(
-        "Valley Profile Type", 
+        "Valley Profile Type",
         ["U-Valley (Parabolic)", "V-Valley (Linear)", "Lateral Moraines", "Asymmetric Valley", "None (Flat Slab)"]
     )
 
@@ -170,7 +201,7 @@ if dat_files_found > 0 and mesh_found:
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("Undeformed 3D Mesh Nodes")
-            fig = px.scatter_3d(nodes_orig, x='X', y='Y', z='Z', color='Z', 
+            fig = px.scatter_3d(nodes_orig, x='X', y='Y', z='Z', color='Z',
                                 opacity=0.6, color_continuous_scale='Bluered_r')
             fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
             st.plotly_chart(fig, use_container_width=True)
@@ -185,24 +216,40 @@ if dat_files_found > 0 and mesh_found:
     with tab2:
         st.subheader("Deformed 3D Mesh with Y-Variations")
         with st.spinner("Deforming mesh using parallel processing..."):
-            n_jobs = os.cpu_count() or 4
-            chunks = np.array_split(nodes_orig, n_jobs)
-            
-            results = Parallel(n_jobs=n_jobs)(
-                delayed(deform_chunk)(chunk.copy(), bedrock_df, surface_df, profile_type, params) 
+            # ---- Fixed chunking + parallel call --------------------------------
+            # Split *row indices*, not the DataFrame itself. np.array_split on a
+            # DataFrame coerces via np.asarray and returns ndarrays, which is
+            # exactly what caused `chunk['X']` to raise IndexError in the worker.
+            n_jobs = min(os.cpu_count() or 4, 8)   # cap to avoid Cloud memory thrash
+
+            idx_chunks = np.array_split(np.arange(len(nodes_orig)), n_jobs)
+            chunks = [
+                nodes_orig.iloc[idx].reset_index(drop=True).copy()
+                for idx in idx_chunks
+            ]
+
+            # Threading backend: NumPy releases the GIL during np.interp, so we
+            # still get parallel speedup without loky spawning subprocesses
+            # (which is what triggers the unrelated `Popen.kill()` AttributeError
+            # on Python 3.12 / Streamlit Cloud).
+            results = Parallel(n_jobs=n_jobs, backend="threading")(
+                delayed(deform_chunk)(chunk, bedrock_df, surface_df, profile_type, params)
                 for chunk in chunks
             )
-            nodes_deformed = pd.concat(results)
-            
-        fig_def = px.scatter_3d(nodes_deformed, x='X', y='Y', z='Z_new', color='Z_new', 
+            nodes_deformed = pd.concat(results, ignore_index=True)
+            # --------------------------------------------------------------------
+
+        fig_def = px.scatter_3d(nodes_deformed, x='X', y='Y', z='Z_new', color='Z_new',
                                 opacity=0.8, color_continuous_scale='Earth')
         fig_def.update_layout(margin=dict(l=0, r=0, t=0, b=0))
         st.plotly_chart(fig_def, use_container_width=True)
-        
+
         st.session_state['nodes_deformed'] = nodes_deformed
 
     with tab3:
         st.subheader("Export Processed Data")
         if 'nodes_deformed' in st.session_state:
-            csv_mesh = st.session_state['nodes_deformed'][['ID', 'Flag', 'X', 'Y', 'Z_new']].to_csv(index=False, sep=' ', header=False, float_format='%.4f')
+            csv_mesh = st.session_state['nodes_deformed'][['ID', 'Flag', 'X', 'Y', 'Z_new']].to_csv(
+                index=False, sep=' ', header=False, float_format='%.4f'
+            )
             st.download_button("⬇️ Download Deformed mesh.nodes", csv_mesh, file_name="mesh.nodes")
