@@ -34,7 +34,7 @@ st.caption("Loads mesh and profile data, applies Y-direction variations, and exp
 
 st.info(f"📁 **Mesh directory:** `{MESH_DIR}`\n📁 **Data directory:** `{DAT_DIR}`")
 
-if st.button("🔄 Reload Data"):
+if st.button("🔄 Reload Data", key="reload_data_btn"):
     st.cache_data.clear()
     st.rerun()
 
@@ -95,8 +95,12 @@ if dat_files_found > 0 and mesh_found:
     nodes_orig = read_mesh(mesh_nodes_file)
 
     st.sidebar.header("📂 File Selection")
-    surface_file = st.sidebar.selectbox("Surface Profile (.dat)", dat_files)
-    bedrock_file = st.sidebar.selectbox("Bedrock Profile (.dat)", dat_files)
+    surface_file = st.sidebar.selectbox(
+        "Surface Profile (.dat)", dat_files, key="surface_file_select"
+    )
+    bedrock_file = st.sidebar.selectbox(
+        "Bedrock Profile (.dat)", dat_files, key="bedrock_file_select"
+    )
 
     surface_df = read_dat(surface_file)
     bedrock_df = read_dat(bedrock_file)
@@ -218,28 +222,49 @@ if dat_files_found > 0 and mesh_found:
     st.sidebar.header("⛰️ Y-Direction Variation")
     profile_type = st.sidebar.selectbox(
         "Valley Profile Type",
-        ["U-Valley (Parabolic)", "V-Valley (Linear)", "Lateral Moraines", "Asymmetric Valley", "None (Flat Slab)"]
+        ["U-Valley (Parabolic)", "V-Valley (Linear)", "Lateral Moraines", "Asymmetric Valley", "None (Flat Slab)"],
+        key="profile_type_select",
     )
 
     params = {'z_max_orig': nodes_orig['Z'].max() if 'Z' in nodes_orig else 5.0}
 
     if "U-Valley" in profile_type or "Asymmetric" in profile_type:
-        params['y_center'] = st.sidebar.slider("Valley Center (Y)", 0.0, 1000.0, 500.0)
+        params['y_center'] = st.sidebar.slider(
+            "Valley Center (Y)", 0.0, 1000.0, 500.0, key="y_center_slider"
+        )
     if "U-Valley" in profile_type or "V-Valley" in profile_type:
-        params['steepness'] = st.sidebar.slider("Wall Steepness", 0.00001, 0.005, 0.0003, format="%.5f")
+        params['steepness'] = st.sidebar.slider(
+            "Wall Steepness", 0.00001, 0.005, 0.0003, format="%.5f", key="steepness_slider"
+        )
     if "Asymmetric" in profile_type:
-        params['steepness_left'] = st.sidebar.slider("Left Wall Steepness", 0.00001, 0.005, 0.0002, format="%.5f")
-        params['steepness_right'] = st.sidebar.slider("Right Wall Steepness", 0.00001, 0.005, 0.0005, format="%.5f")
+        params['steepness_left'] = st.sidebar.slider(
+            "Left Wall Steepness", 0.00001, 0.005, 0.0002, format="%.5f", key="steepness_left_slider"
+        )
+        params['steepness_right'] = st.sidebar.slider(
+            "Right Wall Steepness", 0.00001, 0.005, 0.0005, format="%.5f", key="steepness_right_slider"
+        )
     if "Moraines" in profile_type:
-        params['width'] = st.sidebar.slider("Moraine Width (Sigma)", 10.0, 300.0, 100.0)
-        params['height'] = st.sidebar.slider("Moraine Height (m)", 0.0, 200.0, 50.0)
+        params['width'] = st.sidebar.slider(
+            "Moraine Width (Sigma)", 10.0, 300.0, 100.0, key="moraine_width_slider"
+        )
+        params['height'] = st.sidebar.slider(
+            "Moraine Height (m)", 0.0, 200.0, 50.0, key="moraine_height_slider"
+        )
 
     st.sidebar.header("🕳️ X-Direction Features")
-    params['add_trench'] = st.sidebar.checkbox("Add Subglacial Trench (Overdeepening)")
+    params['add_trench'] = st.sidebar.checkbox(
+        "Add Subglacial Trench (Overdeepening)", key="trench_checkbox"
+    )
     if params['add_trench']:
-        params['trench_x'] = st.sidebar.slider("Trench Center (X)", 0.0, 2500.0, 1800.0)
-        params['trench_w'] = st.sidebar.slider("Trench Width", 50.0, 500.0, 200.0)
-        params['trench_d'] = st.sidebar.slider("Trench Depth (m)", 0.0, 200.0, 50.0)
+        params['trench_x'] = st.sidebar.slider(
+            "Trench Center (X)", 0.0, 2500.0, 1800.0, key="trench_x_slider"
+        )
+        params['trench_w'] = st.sidebar.slider(
+            "Trench Width", 50.0, 500.0, 200.0, key="trench_w_slider"
+        )
+        params['trench_d'] = st.sidebar.slider(
+            "Trench Depth (m)", 0.0, 200.0, 50.0, key="trench_d_slider"
+        )
 
     # ==========================================
     # 6. Main Dashboard Tabs
@@ -251,6 +276,9 @@ if dat_files_found > 0 and mesh_found:
         "💾 Export Data",
     ])
 
+    # --------------------------------------------------------------
+    # Tab 1 — Original Geometry
+    # --------------------------------------------------------------
     with tab1:
         col1, col2 = st.columns(2)
         with col1:
@@ -258,15 +286,18 @@ if dat_files_found > 0 and mesh_found:
             fig = px.scatter_3d(nodes_orig, x='X', y='Y', z='Z', color='Z',
                                 opacity=0.6, color_continuous_scale='Bluered_r')
             fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         with col2:
             st.subheader("1D Flowline Profiles (.dat)")
             fig2d = go.Figure()
             fig2d.add_trace(go.Scatter(x=surface_df['X'], y=surface_df['Z'], name='Surface', line=dict(color='blue')))
             fig2d.add_trace(go.Scatter(x=bedrock_df['X'], y=bedrock_df['Z'], name='Bedrock', line=dict(color='brown')))
             fig2d.update_layout(xaxis_title="Distance X (m)", yaxis_title="Elevation Z (m)")
-            st.plotly_chart(fig2d, use_container_width=True)
+            st.plotly_chart(fig2d, width="stretch")
 
+    # --------------------------------------------------------------
+    # Tab 2 — Deformed 3D Mesh
+    # --------------------------------------------------------------
     with tab2:
         st.subheader("Deformed 3D Mesh with Y-Variations")
         with st.spinner("Deforming mesh using parallel processing..."):
@@ -296,33 +327,14 @@ if dat_files_found > 0 and mesh_found:
         fig_def = px.scatter_3d(nodes_deformed, x='X', y='Y', z='Z_new', color='Z_new',
                                 opacity=0.8, color_continuous_scale='Earth')
         fig_def.update_layout(margin=dict(l=0, r=0, t=0, b=0))
-        st.plotly_chart(fig_def, use_container_width=True)
+        st.plotly_chart(fig_def, width="stretch")
 
         st.session_state['nodes_deformed'] = nodes_deformed
 
     # --------------------------------------------------------------
-    # NEW TAB: Net Elevation Angle (Z-X) numerics + plots
+    # Tab 3 — Net Elevation Angle (Z-X) numerics + plots
     # --------------------------------------------------------------
-    with tab4:
-        pass  # placeholder, defined after we know the order — see below
-
-    # Rebuild tab list in the intended display order:
-    # We actually want the angle tab as tab3 and export as tab4, so re-render
-    # with the correct ordering (Streamlit doesn't let us reorder after the
-    # fact, so we simply use the labels we already declared and fill tab3/tab4
-    # in the right place).
-    #
-    # To keep the code linear and readable we recompute the angle table here and
-    # render it into tab3 below. (tab4 stays the export tab.)
-    #
-    # NOTE: The `tab1, tab2, tab3, tab4` order above is:
-    #   tab1 -> Original Geometry
-    #   tab2 -> Deformed 3D Mesh
-    #   tab3 -> Elevation Angles (Z-X)
-    #   tab4 -> Export Data
-    # ------------------------------------------------------------------
-
-    # Recompute angle table (cached so slider changes on tab2 don't re-trigger it)
+    # Recompute angle table (Streamlit caches read_dat, so this is cheap)
     angles_df = compute_elevation_angles(surface_df, bedrock_df)
     st.session_state['angles_df'] = angles_df
 
@@ -355,7 +367,7 @@ if dat_files_found > 0 and mesh_found:
             margin=dict(l=0, r=0, t=60, b=0),
             hovermode='x unified',
         )
-        st.plotly_chart(fig_ang, use_container_width=True)
+        st.plotly_chart(fig_ang, width="stretch")
 
         # ---------- Numeric summary ----------
         st.markdown("### 📊 Numeric Summary")
@@ -389,34 +401,44 @@ if dat_files_found > 0 and mesh_found:
                 'Surface_dZdX': '{:.6e}',
                 'Bedrock_dZdX': '{:.6e}',
             }),
-            use_container_width=True,
+            width="stretch",
             height=420,
         )
 
         # ---------- Local CSV download for the angle table ----------
-        csv_angles = angles_df.to_csv(index=False, float_format='%.8f')
+        csv_angles_tab3 = angles_df.to_csv(index=False, float_format='%.8f')
         st.download_button(
             "⬇️ Download elevation_angles.csv",
-            csv_angles,
+            csv_angles_tab3,
             file_name="elevation_angles.csv",
             mime="text/csv",
+            key="download_angles_tab3",  # <-- unique key prevents StreamlitDuplicateElementId
         )
 
+    # --------------------------------------------------------------
+    # Tab 4 — Export Data
+    # --------------------------------------------------------------
     with tab4:
         st.subheader("Export Processed Data")
         if 'nodes_deformed' in st.session_state:
             csv_mesh = st.session_state['nodes_deformed'][['ID', 'Flag', 'X', 'Y', 'Z_new']].to_csv(
                 index=False, sep=' ', header=False, float_format='%.4f'
             )
-            st.download_button("⬇️ Download Deformed mesh.nodes", csv_mesh, file_name="mesh.nodes")
+            st.download_button(
+                "⬇️ Download Deformed mesh.nodes",
+                csv_mesh,
+                file_name="mesh.nodes",
+                key="download_mesh_tab4",  # <-- unique key
+            )
 
         if 'angles_df' in st.session_state:
             st.markdown("---")
             st.markdown("**Elevation-angle table** (also available on the *Elevation Angles* tab)")
-            csv_angles = st.session_state['angles_df'].to_csv(index=False, float_format='%.8f')
+            csv_angles_tab4 = st.session_state['angles_df'].to_csv(index=False, float_format='%.8f')
             st.download_button(
                 "⬇️ Download elevation_angles.csv",
-                csv_angles,
+                csv_angles_tab4,
                 file_name="elevation_angles.csv",
                 mime="text/csv",
+                key="download_angles_tab4",  # <-- unique key (different from tab3)
             )
