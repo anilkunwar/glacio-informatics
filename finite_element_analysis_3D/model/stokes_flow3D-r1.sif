@@ -1,14 +1,14 @@
 !echo on
 Header
   !CHECK KEYWORDS Warn
-  Mesh DB "." "testglacier_3D"  ! Ensure your 3D mesh folder is named this
+  Mesh DB "." "glacier"
   Include Path ""
   Results Directory ""
 End
 
 Simulation
   Max Output Level = 4
-  Coordinate System = "Cartesian 3D"   ! Changed to 3D
+  Coordinate System = "Cartesian 3D"
   Coordinate Mapping(3) = 1 2 3
   Simulation Type = "Steady"
   Steady State Max Iterations = 1
@@ -34,62 +34,57 @@ Equation 1
   Name = "Equation1"
   Convection = "computed"
   Flow Solution Name = String "Flow Solution"
-  Active Solvers(3) = 1 2 3
+  ! Only 2 solvers needed in 3D: MeshMapper (1) and Stokes (2)
+  Active Solvers(2) = 1 2 
 End
 
 Initial Condition 1
   Velocity 1 = 0.0
   Velocity 2 = 0.0
-  Velocity 3 = 0.0   ! Added Z-velocity
+  Velocity 3 = 0.0
   Pressure = 0.0
-  Depth = Real 0.0
 End
 
-! maps DEM's at the very beginning to the 3D cuboid mesh
+! ==============================================================================
+! Solver 1: Maps the 1D .dat topography to the 3D mesh (Z-direction)
+! ==============================================================================
 Solver 1
   Exec Solver = "before Simulation"
   Equation = "MapCoordinate"
   Procedure = "StructuredMeshMapper" "StructuredMeshMapper"
-  Active Coordinate = Integer 3  ! Now updating the Z-direction (3rd coordinate)
+  Active Coordinate = Integer 3       ! the mesh-update is z-direction in 3D
   Mesh Velocity Variable = String "Mesh Velocity 3"
   Mesh Velocity First Zero = Logical True
   Dot Product Tolerance = Real 0.01
 End
 
-! Flow Depth for postprocessing
+! ==============================================================================
+! Solver 2: The central 3D Stokes solver
+! ==============================================================================
 Solver 2
-  Equation = "HeightDepth"
-  Procedure = "StructuredProjectToPlane" "StructuredProjectToPlane"
-  Active Coordinate = Integer 3  ! Project onto the Z-plane
-  Operator 1 = depth
-  Operator 2 = height
-End
-
-! The 3D Stokes solver
-Solver 3
   Equation = "Navier-Stokes"
   Optimize Bandwidth = Logical True
   Linear System Solver = Direct
-  Linear System Direct Method = "UMFPACK"     
+  Linear System Direct Method = "UMFPACK"
   Linear System Max Iterations = 5000
   Linear System Convergence Tolerance = 1.0E-06
   Linear System Abort Not Converged = False
   Linear System Preconditioning = "ILU1"
   Linear System Residual Output = 1
   Flow Model = Stokes
-
   Steady State Convergence Tolerance = 1.0E-05
   Stabilization Method = Stabilized
-
   Nonlinear System Convergence Tolerance = 1.0E-04
   Nonlinear System Convergence Measure = Solution
   Nonlinear System Max Iterations = 50
   Nonlinear System Newton After Iterations = 3
-  Nonlinear System Newton After Tolerance =  1.0E-01
-  Exported Variable 1 = -dofs 3 "Mesh Velocity" 
+  Nonlinear System Newton After Tolerance = 1.0E-01
+  Exported Variable 1 = -dofs 3 "Mesh Velocity"
 End
 
-! We use m-yr-MPa system
+! ==============================================================================
+! Material & Body Forces
+! ==============================================================================
 Material 1
   Name = "ice"
   Density = Real $910.0*1.0E-06*(31556926.0)^(-2.0)
@@ -108,38 +103,44 @@ End
 
 Body Force 1
   Name = "BodyForce1"
-  Flow BodyForce 1 = Real 0.0                          
+  Heat Source = 1
+  Flow BodyForce 1 = Real 0.0
   Flow BodyForce 2 = Real 0.0
-  Flow BodyForce 3 = Real $-9.81 * (31556926.0)^(2.0)  ! Gravity now acts in the Z-direction
+  Flow BodyForce 3 = Real $-9.81 * (31556926.0)^(2.0)  ! Gravity in Z-direction
 End
 
-! Bedrock (Bottom boundary)
+! ==============================================================================
+! Boundary Conditions
+! Mapped to your 3D mesh boundary IDs: 1=Sides, 2=Bedrock, 3=Surface
+! ==============================================================================
+
+! Bedrock (Bottom face, Boundary ID 2)
 Boundary Condition 1
   Name = "bedrock"
-  Target Boundaries = 1
-  Bottom Surface = Variable Coordinate 1, Coordinate 2  ! Uses both X and Y
-    Real cubic
-       include  "steady_ELA400_bedrock_3D.dat" 
+  Target Boundaries = 2
+  Bottom Surface = Variable Coordinate 1
+  Real cubic
+     include "steady_ELA400_bedrock.dat" 
   End
   Velocity 1 = Real 0.0e0
   Velocity 2 = Real 0.0e0
-  Velocity 3 = Real 0.0e0   ! No-slip in 3D
+  Velocity 3 = Real 0.0e0
 End
 
-! Lateral Walls (Combined left, right, front, back)
+! Surface (Top face, Boundary ID 3)
 Boundary Condition 2
-  Name = "sides"
-  Target Boundaries(4) = 3 4 5 6   ! 4 side walls in a 3D cuboid
-  Velocity 1 = Real 0.0e0          ! No flow in X
-  Velocity 2 = Real 0.0e0          ! No flow in Y
+  Name = "surface"
+  Target Boundaries = 3
+  Top Surface = Variable Coordinate 1  
+  Real cubic
+     include "steady_ELA400_surface.dat" 
+  End
 End
 
-! Surface (Top boundary)
+! Lateral Walls (Side faces, Boundary ID 1)
 Boundary Condition 3
-  Name = "surface"
-  Target Boundaries = 2
-  Top Surface = Variable Coordinate 1, Coordinate 2   ! Uses both X and Y
-    Real cubic
-       include  "steady_ELA400_surface_3D.dat" 
-  End
+  Name = "sides"
+  Target Boundaries = 1
+  Velocity 1 = Real 0.0e0
+  Velocity 2 = Real 0.0e0
 End
