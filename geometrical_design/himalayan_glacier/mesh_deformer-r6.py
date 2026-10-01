@@ -169,6 +169,28 @@ if dat_files_found > 0 and mesh_found:
     nodes_orig = read_mesh(mesh_nodes_file)
 
     # ==========================================
+    # 3c. Spatial Domain Detection (X, Y, Z extents)
+    # ==========================================
+    # The mesh coordinates drive every spatial slider and every fallback in
+    # the deformation math. Reading them once here (instead of hard-coding
+    # 0–1000 / 0–1000 from the old mesh) means the UI and the deform_chunk
+    # defaults automatically track whatever mesh.nodes is actually loaded.
+    X_MESH_MIN = float(nodes_orig['X'].min())
+    X_MESH_MAX = float(nodes_orig['X'].max())
+    Y_MESH_MIN = float(nodes_orig['Y'].min())
+    Y_MESH_MAX = float(nodes_orig['Y'].max())
+    Z_MESH_MAX = float(nodes_orig['Z'].max()) if 'Z' in nodes_orig else 5.0
+    Z_MESH_MIN = float(nodes_orig['Z'].min()) if 'Z' in nodes_orig else 0.0
+
+    st.caption(
+        f"📐 **Mesh extent** — "
+        f"X: `{X_MESH_MIN:.1f}` → `{X_MESH_MAX:.1f}` m · "
+        f"Y: `{Y_MESH_MIN:.1f}` → `{Y_MESH_MAX:.1f}` m · "
+        f"Z: `{Z_MESH_MIN:.1f}` → `{Z_MESH_MAX:.1f}` m · "
+        f"`{len(nodes_orig):,}` nodes"
+    )
+
+    # ==========================================
     # 3b. Intuitive .dat file auto-detection
     # ==========================================
     # Two things had to be fixed here:
@@ -267,8 +289,16 @@ if dat_files_found > 0 and mesh_found:
         z_bed_interp = np.interp(x_mesh, bedrock['X'].to_numpy(), bedrock['Z'].to_numpy())
         z_surf_interp = np.interp(x_mesh, surface['X'].to_numpy(), surface['Z'].to_numpy())
 
-        y_center = params.get('y_center', 500.0)
-        y_max = chunk['Y'].max() if 'Y' in chunk else 1000.0
+        # ---- Y-domain: GLOBAL mesh extent, not per-chunk values ----
+        # Previously `y_center` defaulted to 500 and `y_max` was read from the
+        # current chunk with `chunk['Y'].max()`. That worked only because each
+        # parallel chunk happened to span a full Z-layer; it also locked the
+        # valley center to the old 1000 m-wide domain. We now pull BOTH the
+        # extents and the center from `params`, which is populated from the
+        # actual mesh bounds in Section 3c and the sidebar slider in Section 5.
+        y_min = params.get('y_mesh_min', 0.0)
+        y_max = params.get('y_mesh_max', 1000.0)
+        y_center = params.get('y_center', (y_min + y_max) / 2.0)
 
         if profile_type == "U-Valley (Parabolic)":
             steepness = params.get('steepness', 0.0003)
@@ -279,9 +309,14 @@ if dat_files_found > 0 and mesh_found:
         elif profile_type == "Lateral Moraines":
             sigma = params.get('width', 100.0)
             height = params.get('height', 50.0)
+            # Anchor moraines to the GLOBAL walls, not to the local chunk's max.
+            # `edge` keeps the ridges a fixed distance off each wall regardless
+            # of how wide the mesh gets (50 m, or 5% of the span — whichever is
+            # smaller, so narrow meshes stay sensible too).
+            edge = min(50.0, 0.05 * (y_max - y_min))
             y_var = height * (
-                np.exp(-((y_mesh - 50) ** 2) / (2 * sigma ** 2))
-                + np.exp(-((y_mesh - (y_max - 50)) ** 2) / (2 * sigma ** 2))
+                np.exp(-((y_mesh - (y_min + edge)) ** 2) / (2 * sigma ** 2))
+                + np.exp(-((y_mesh - (y_max - edge)) ** 2) / (2 * sigma ** 2))
             )
         elif profile_type == "Asymmetric Valley":
             s_left = params.get('steepness_left', 0.0002)
@@ -390,11 +425,32 @@ if dat_files_found > 0 and mesh_found:
         key="profile_type_select",
     )
 
-    params = {'z_max_orig': nodes_orig['Z'].max() if 'Z' in nodes_orig else 5.0}
+    # Pull every spatial bound from the actual mesh (Section 3c) so the UI
+    # tracks the loaded geometry automatically instead of the old hard-coded
+    # 0–1000 window. `z_max_orig` is likewise read from the file.
+    params = {
+        'z_max_orig': Z_MESH_MAX,
+        'x_mesh_min': X_MESH_MIN, 'x_mesh_max': X_MESH_MAX,
+        'y_mesh_min': Y_MESH_MIN, 'y_mesh_max': Y_MESH_MAX,   # NEW
+    }
+
+    # Default valley center = geometric midpoint of the mesh in Y.
+    # For the new 0–2000 m grid this lands exactly on Y = 1000 m.
+    default_y_center = float((Y_MESH_MIN + Y_MESH_MAX) / 2.0)
 
     if "U-Valley" in profile_type or "Asymmetric" in profile_type:
         params['y_center'] = st.sidebar.slider(
-            "Valley Center (Y)", 0.0, 1000.0, 500.0, key="y_center_slider"
+            "Valley Center (Y)",
+            min_value=float(Y_MESH_MIN),
+            max_value=float(Y_MESH_MAX),
+            value=default_y_center,          # ← 1000 m for a 0–2000 m mesh
+            step=float(max(1.0, (Y_MESH_MAX - Y_MESH_MIN) / 1000.0)),
+            key="y_center_slider",
+            help=(
+                "Midpoint of the glacier cross-section. Defaults to the mesh's "
+                f"Y midpoint ({default_y_center:.1f} m). "
+                f"Valid range: {Y_MESH_MIN:.1f} – {Y_MESH_MAX:.1f} m."
+            ),
         )
     if "U-Valley" in profile_type or "V-Valley" in profile_type:
         params['steepness'] = st.sidebar.slider(
@@ -420,8 +476,15 @@ if dat_files_found > 0 and mesh_found:
         "Add Subglacial Trench (Overdeepening)", key="trench_checkbox"
     )
     if params['add_trench']:
+        # Trench sliders are now bounded by the actual X domain of the mesh,
+        # not the stale 0–2500 m range from the old grid.
+        trench_default_x = float(X_MESH_MIN + 0.72 * (X_MESH_MAX - X_MESH_MIN))
         params['trench_x'] = st.sidebar.slider(
-            "Trench Center (X)", 0.0, 2500.0, 1800.0, key="trench_x_slider"
+            "Trench Center (X)",
+            min_value=float(X_MESH_MIN),
+            max_value=float(X_MESH_MAX),
+            value=trench_default_x,
+            key="trench_x_slider",
         )
         params['trench_w'] = st.sidebar.slider(
             "Trench Width", 50.0, 500.0, 200.0, key="trench_w_slider"
