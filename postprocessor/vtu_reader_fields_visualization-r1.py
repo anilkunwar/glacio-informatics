@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import glob
+import zipfile
 import numpy as np
 import plotly.graph_objects as go
 import meshio
@@ -23,7 +24,32 @@ st.set_page_config(
 # =============================================
 COLORMAPS = ['Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Blues', 'Reds', 'Greens', 'Jet', 'Rainbow']
 
-# PATCH 1 — file discovery now handles .pvtu, bare .vtu, and recursive subfolders
+
+# NEW (B3) — self-extract <directory>.zip on first load if the folder is missing.
+# Handles both "zip contains the folder" and "zip contains bare files" layouts.
+@st.cache_data
+def ensure_data_dir(directory: str) -> str:
+    """Extract <directory>.zip (repo root or data/) once if the folder is missing."""
+    if os.path.isdir(directory):
+        return directory
+
+    base = os.path.basename(directory.rstrip("/"))
+    for zpath in (f"{directory}.zip", os.path.join("data", f"{base}.zip")):
+        if not os.path.isfile(zpath):
+            continue
+        with zipfile.ZipFile(zpath) as zf:
+            names = [n for n in zf.namelist() if not n.endswith("/")]
+            tops = {n.split("/")[0] for n in names}
+            if tops == {base}:          # zip already contains the folder
+                zf.extractall(".")
+            else:                        # bare files -> extract into the folder
+                os.makedirs(directory, exist_ok=True)
+                zf.extractall(directory)
+        return directory
+    return directory
+
+
+# PATCH 1 — file discovery handles .pvtu, bare .vtu, and recursive subfolders
 @st.cache_data
 def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA400_3D_diagnostic"):
     """
@@ -62,7 +88,6 @@ def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA400_3D_diagnost
     if not vtu_files:
         return None
 
-    # Load the first file to get mesh structure and field names
     try:
         mesh0 = meshio.read(vtu_files[0])
     except Exception as e:
@@ -72,7 +97,6 @@ def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA400_3D_diagnost
     points = mesh0.points.astype(np.float32)
     n_pts = len(points)
 
-    # Look for surface triangles first. Elmer 3D usually outputs tetrahedra.
     triangles = None
     for cell_block in mesh0.cells:
         if cell_block.type == "triangle":
@@ -81,7 +105,6 @@ def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA400_3D_diagnost
 
     has_surface = triangles is not None
 
-    # Extract fields from the first timestep
     fields = {}
     field_info = {}
 
@@ -96,7 +119,6 @@ def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA400_3D_diagnost
             fields[key] = np.full((len(vtu_files), n_pts, arr.shape[1]), np.nan, dtype=np.float32)
             fields[key][0] = arr
 
-    # Load remaining timesteps (if it's a time-series)
     for t in range(1, len(vtu_files)):
         try:
             mesh = meshio.read(vtu_files[t])
@@ -116,6 +138,7 @@ def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA400_3D_diagnost
         "fields": fields
     }
 
+
 # =============================================
 # MAIN APP
 # =============================================
@@ -123,10 +146,8 @@ def main():
     st.markdown("<h1 style='text-align: center;'>🏔️ Elmer Glacier 3D Diagnostic Viewer</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center;'>Visualize Stokes flow, velocity, pressure, and depth from Elmer FEM output.</p>", unsafe_allow_html=True)
 
-    # Sidebar Configuration
     st.sidebar.header("⚙️ Configuration")
 
-    # Defaults pulled directly from your .sif file
     default_dir = "himalayan_glacier3d"
     data_dir = st.sidebar.text_input("Results Directory", value=default_dir)
     prefix = st.sidebar.text_input("File Prefix", value="Stokes_ELA400_3D_diagnostic")
@@ -134,6 +155,8 @@ def main():
     if st.sidebar.button("🔄 Load Data", type="primary"):
         # PATCH 2 — never reuse a cached failed load (stale None trap)
         load_elmer_vtu_data.clear()
+        # NEW (B3) — try to materialize the directory from a bundled zip first
+        data_dir = ensure_data_dir(data_dir)
         st.session_state.data = load_elmer_vtu_data(data_dir, prefix)
         st.session_state.loaded = True
 
@@ -150,7 +173,8 @@ def main():
             st.write(f"Streamlit working directory: `{os.getcwd()}`")
             if not os.path.isdir(data_dir):
                 st.write(f"❌ `{data_dir}` does **not exist** relative to that directory. "
-                         "Use an absolute path or launch Streamlit from the parent folder.")
+                         "On Streamlit Cloud this is expected until you commit or LFS-track the data "
+                         "(or drop a `.zip` next to the app so it can self-extract).")
             else:
                 entries = sorted(os.listdir(data_dir))
                 st.write(f"✅ Directory exists, {len(entries)} entries:")
@@ -162,9 +186,6 @@ def main():
 
     st.success(f"✅ Loaded {data['n_timesteps']} timestep(s) successfully!")
 
-    # -----------------------------------------
-    # CONTROLS
-    # -----------------------------------------
     st.markdown("### 🎛️ Visualization Controls")
     col1, col2, col3, col4 = st.columns(4)
 
@@ -182,15 +203,11 @@ def main():
     with col4:
         z_exag = st.slider("Z Exaggeration", 1.0, 100.0, 10.0, 1.0, help="Glaciers are thin; exaggerate Z to see thickness.")
 
-    # Performance decimation
     max_points = st.sidebar.number_input("Max Points (Decimation)", min_value=10000, max_value=1000000, value=150000, step=10000)
     point_size = st.sidebar.slider("Point Size (if cloud)", 1, 15, 3)
 
-    # -----------------------------------------
-    # DATA PROCESSING
-    # -----------------------------------------
     pts = data['points'].copy()
-    pts[:, 2] *= z_exag  # Apply Z exaggeration
+    pts[:, 2] *= z_exag
 
     kind = data['field_info'][field]
     raw = data['fields'][field][timestep]
@@ -203,21 +220,16 @@ def main():
         values = np.where(np.isnan(magnitude), 0, magnitude)
         label = f"{field} (Magnitude)"
 
-    # Clean NaNs for plotting
     valid_mask = ~np.isnan(values)
     plot_pts = pts[valid_mask]
     plot_vals = values[valid_mask]
 
-    # Decimate for performance if needed
     if len(plot_pts) > max_points:
         indices = np.random.choice(len(plot_pts), max_points, replace=False)
         plot_pts = plot_pts[indices]
         plot_vals = plot_vals[indices]
         st.sidebar.warning(f"⚠️ Decimated to {max_points} points for browser performance.")
 
-    # -----------------------------------------
-    # PLOTTING
-    # -----------------------------------------
     st.markdown(f"### 📈 {label} at Timestep {timestep + 1}")
 
     cmin = float(np.min(plot_vals))
@@ -269,7 +281,7 @@ def main():
         margin=dict(l=0, r=0, t=40, b=0),
         scene=dict(
             aspectmode="data",
-            camera=dict(eye=dict(x=1.5, y=1.5, z=0.6)), # Angled top-down view ideal for glaciers
+            camera=dict(eye=dict(x=1.5, y=1.5, z=0.6)),
             xaxis=dict(title="X (m)"),
             yaxis=dict(title="Y (m)"),
             zaxis=dict(title="Z (m, exaggerated)")
@@ -278,15 +290,13 @@ def main():
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # -----------------------------------------
-    # STATISTICS
-    # -----------------------------------------
     st.markdown("### 📊 Field Statistics")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Min", f"{np.min(plot_vals):.3e}")
     col2.metric("Max", f"{np.max(plot_vals):.3e}")
     col3.metric("Mean", f"{np.mean(plot_vals):.3e}")
     col4.metric("Std Dev", f"{np.std(plot_vals):.3e}")
+
 
 if __name__ == "__main__":
     main()
