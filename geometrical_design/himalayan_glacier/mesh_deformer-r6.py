@@ -12,30 +12,25 @@ from joblib import Parallel, delayed
 # ==========================================
 st.set_page_config(page_title="Glacier Mesh Deformer & Analyzer", layout="wide")
 
-# Get the absolute path of the directory containing this script
+# ------------------------------------------------------------------------------
+# Path resolution — single source of truth.
+#
+# The script lives *inside* `himalayan_glacier`, so:
+#
+#     BASE_DIR = /mount/src/.../geometrical_design/himalayan_glacier
+#
+# and the data folders sit alongside the script:
+#
+#     BASE_DIR/undeformed_geometry/mesh.nodes
+#     BASE_DIR/surface_bedrock/*.dat
+#
+# No `geometrical_design/himalayan_glacier` re-appending — that would duplicate
+# the folder name (e.g. `.../himalayan_glacier/geometrical_design/himalayan_glacier/...`).
+# ------------------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# ------------------------------------------------------------------------------
-# Direct path resolution — single source of truth is `himalayan_glacier`.
-#
-# The app now has exactly ONE supported layout:
-#
-#     <repo>/geometrical_design/himalayan_glacier/
-#         ├── undeformed_geometry/mesh.nodes
-#         └── surface_bedrock/*.dat
-#
-# No legacy `valley-within-glacier` candidates, no directory walking, no
-# fallback search. If a file isn't where it's expected, the app says so
-# explicitly instead of silently loading a stale copy from an old folder.
-# ------------------------------------------------------------------------------
-
-# Expected locations (used for both lookup and error messages)
-EXPECTED_MESH_DIR = os.path.join(
-    BASE_DIR, "geometrical_design", "himalayan_glacier", "undeformed_geometry"
-)
-EXPECTED_DAT_DIR = os.path.join(
-    BASE_DIR, "geometrical_design", "himalayan_glacier", "surface_bedrock"
-)
+EXPECTED_MESH_DIR = os.path.join(BASE_DIR, "undeformed_geometry")
+EXPECTED_DAT_DIR = os.path.join(BASE_DIR, "surface_bedrock")
 EXPECTED_MESH_FILE = os.path.join(EXPECTED_MESH_DIR, "mesh.nodes")
 
 
@@ -101,8 +96,7 @@ if not mesh_found:
         f"⚠️ **`mesh.nodes` not found** at the expected location:\n\n"
         f"`{EXPECTED_MESH_FILE}`\n\n"
         "On Streamlit Cloud the app only sees files **committed to GitHub**, so check:\n"
-        "1. `mesh.nodes` was actually pushed into "
-        "`geometrical_design/himalayan_glacier/undeformed_geometry/` "
+        "1. `mesh.nodes` was actually pushed into `undeformed_geometry/` "
         "(look at the file tree on github.com, not just your local disk).\n"
         "2. Exact spelling **and capitalization** — Linux is case-sensitive, so "
         "`Undeformed_Geometry`/`Mesh.nodes` ≠ `undeformed_geometry`/`mesh.nodes`.\n"
