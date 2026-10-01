@@ -34,7 +34,7 @@ if df is not None:
     # Clean column names (lowercase, strip whitespace)
     df.columns = [str(c).strip().lower() for c in df.columns]
     
-    st.write("### Original Parsed Data")
+    st.write("### Original Parsed Data (Preview)")
     st.dataframe(df.head(), use_container_width=True)
     
     # Check for required columns
@@ -61,8 +61,9 @@ if df is not None:
         trans_df = trans_df.sort_values('X').reset_index(drop=True)
         trans_df = trans_df.drop_duplicates(subset='X').reset_index(drop=True)
         
-        st.write("### Transformed Data (Ready for .dat)")
+        st.write("### Transformed Data (Preview)")
         st.dataframe(trans_df.head(), use_container_width=True)
+        st.caption("ℹ️ *Note: The table above shows a preview. The download buttons below contain ALL rows.*")
         
         # Plotting Original vs Transformed
         col1, col2 = st.columns(2)
@@ -80,11 +81,19 @@ if df is not None:
             fig2.update_layout(xaxis_title="New X (Starts at 0)", yaxis_title="Z (Elevation)", margin=dict(l=0, r=0, t=30, b=0))
             st.plotly_chart(fig2, use_container_width=True)
             
-        # Convert to .dat format (space-separated, no header, no index)
-        dat_str = trans_df.to_csv(sep=' ', index=False, header=False, float_format='%.4f')
-        
         st.header("2. Export Data")
-        file_name = st.text_input("Output Filename:", "steady_ELA5000_bedrock.dat")
+        
+        # Dynamically determine the default filename based on the uploaded file
+        default_filename = "transformed_profile.dat"
+        if uploaded_file is not None:
+            # Extract base name without extension (e.g., "bedrock" from "bedrock.csv")
+            base_name = uploaded_file.name.rsplit('.', 1)[0]
+            default_filename = f"{base_name}.dat"
+            
+        file_name = st.text_input("Output Filename:", default_filename)
+        
+        # Convert to .dat format (space-separated, no header, no index, FULL ROWS)
+        dat_str = trans_df.to_csv(sep=' ', index=False, header=False, float_format='%.4f')
         
         st.download_button(
             label="⬇️ Download Transformed .dat File",
@@ -93,8 +102,19 @@ if df is not None:
             mime='text/plain'
         )
         
+        # Allow full rows CSV download as requested
+        csv_filename = file_name.rsplit('.', 1)[0] + ".csv"
+        csv_str = trans_df.to_csv(index=False, float_format='%.4f')
+        
+        st.download_button(
+            label="⬇️ Download Transformed .csv File (Full Rows)",
+            data=csv_str,
+            file_name=csv_filename,
+            mime='text/csv'
+        )
+        
         # Show a preview of the raw text format
-        with st.expander("Preview raw .dat text format"):
+        with st.expander("Preview raw .dat text format (First 500 chars)"):
             st.code(dat_str[:500] + ("\n..." if len(dat_str) > 500 else ""), language='plaintext')
             
     else:
