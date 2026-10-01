@@ -36,14 +36,28 @@ def _bounded_walk(root, max_depth=5):
 
 
 def find_mesh_nodes_file():
+    """
+    Locate `mesh.nodes`, preferring the CURRENT layout
+    (`geometrical_design/himalayan_glacier/...`) over any stale legacy copy.
+
+    Ordering matters: explicit candidates are checked first, then a bounded
+    filesystem walk. The walk itself is ordered so the `himalayan_glacier`
+    tree is searched before the legacy `valley-within-glacier` tree, in case
+    an old `mesh.nodes` is still sitting around in the repo.
+    """
     candidates = [
         # New layout: data folders directly under the app folder
         os.path.join(BASE_DIR, "undeformed_geometry", "mesh.nodes"),
+        # CURRENT layout: app folder is inside geometrical_design/himalayan_glacier
+        os.path.join(BASE_DIR, "geometrical_design", "himalayan_glacier",
+                     "undeformed_geometry", "mesh.nodes"),
+        # CURRENT layout: from the app folder, step up into geometrical_design
+        os.path.join(BASE_DIR, os.pardir, "himalayan_glacier",
+                     "undeformed_geometry", "mesh.nodes"),
         # Legacy nested layout (old fallback, kept for compatibility)
         os.path.join(BASE_DIR, "geometrical_design", "valley-within-glacier",
                      "undeformed_geometry", "mesh.nodes"),
         # Legacy layout as a SIBLING of the app folder
-        # (app moved: valley-within-glacier → himalayan_glacier)
         os.path.join(BASE_DIR, os.pardir, "valley-within-glacier",
                      "undeformed_geometry", "mesh.nodes"),
     ]
@@ -51,8 +65,21 @@ def find_mesh_nodes_file():
         c = os.path.normpath(c)
         if os.path.isfile(c):
             return c
-    # Last resort: search app folder + repo root (its parent)
-    for root in (BASE_DIR, os.path.join(BASE_DIR, os.pardir)):
+
+    # Last resort: bounded walk. Search himalayan_glacier first so that if a
+    # stale valley-within-glacier/mesh.nodes is still present, it doesn't win.
+    preferred_roots = [
+        os.path.join(BASE_DIR, "geometrical_design", "himalayan_glacier"),
+        os.path.join(BASE_DIR, os.pardir, "himalayan_glacier"),
+        BASE_DIR,
+        os.path.join(BASE_DIR, os.pardir),
+    ]
+    seen = set()
+    for root in preferred_roots:
+        root = os.path.normpath(root)
+        if root in seen:
+            continue
+        seen.add(root)
         for dirpath, filenames in _bounded_walk(root):
             if "mesh.nodes" in filenames:
                 return os.path.join(dirpath, "mesh.nodes")
@@ -60,8 +87,14 @@ def find_mesh_nodes_file():
 
 
 def find_dat_dir():
+    """
+    Locate the directory containing the profile `.dat` files, preferring the
+    CURRENT `himalayan_glacier` layout over any stale legacy copy.
+    """
     candidates = [
         os.path.join(BASE_DIR, "surface_bedrock"),
+        os.path.join(BASE_DIR, "geometrical_design", "himalayan_glacier", "surface_bedrock"),
+        os.path.join(BASE_DIR, os.pardir, "himalayan_glacier", "surface_bedrock"),
         os.path.join(BASE_DIR, "geometrical_design", "valley-within-glacier", "surface_bedrock"),
         os.path.join(BASE_DIR, os.pardir, "valley-within-glacier", "surface_bedrock"),
     ]
@@ -69,8 +102,20 @@ def find_dat_dir():
         c = os.path.normpath(c)
         if os.path.isdir(c) and glob.glob(os.path.join(c, "*.dat")):
             return c
+
     best_dir, best_n = None, 0
-    for root in (BASE_DIR, os.path.join(BASE_DIR, os.pardir)):
+    preferred_roots = [
+        os.path.join(BASE_DIR, "geometrical_design", "himalayan_glacier"),
+        os.path.join(BASE_DIR, os.pardir, "himalayan_glacier"),
+        BASE_DIR,
+        os.path.join(BASE_DIR, os.pardir),
+    ]
+    seen = set()
+    for root in preferred_roots:
+        root = os.path.normpath(root)
+        if root in seen:
+            continue
+        seen.add(root)
         for dirpath, filenames in _bounded_walk(root):
             n = sum(1 for f in filenames if f.lower().endswith(".dat"))
             if n > best_n:
@@ -136,6 +181,17 @@ if not mesh_found:
     )
 else:
     st.success(f"✅ Found `mesh.nodes` at `{mesh_nodes_file}`.")
+    # Warn if the auto-discovery picked up the legacy valley-within-glacier copy
+    if "valley-within-glacier" in mesh_nodes_file:
+        st.warning(
+            "⚠️ The loaded `mesh.nodes` lives in the **legacy** `valley-within-glacier` "
+            "folder. If you intended to use the file in `himalayan_glacier/undeformed_geometry/`, "
+            "either:\n"
+            "1. Delete/rename the stale `geometrical_design/valley-within-glacier/"
+            "undeformed_geometry/mesh.nodes` in your repo, or\n"
+            "2. Push the new `mesh.nodes` into `himalayan_glacier/undeformed_geometry/` "
+            "and press **🔄 Reload Data**."
+        )
 
 # ==========================================
 # 3. Main App Logic (Only runs if files are found)
@@ -431,11 +487,10 @@ if dat_files_found > 0 and mesh_found:
     params = {
         'z_max_orig': Z_MESH_MAX,
         'x_mesh_min': X_MESH_MIN, 'x_mesh_max': X_MESH_MAX,
-        'y_mesh_min': Y_MESH_MIN, 'y_mesh_max': Y_MESH_MAX,   # NEW
+        'y_mesh_min': Y_MESH_MIN, 'y_mesh_max': Y_MESH_MAX,
     }
 
     # Default valley center = geometric midpoint of the mesh in Y.
-    # For the new 0–2000 m grid this lands exactly on Y = 1000 m.
     default_y_center = float((Y_MESH_MIN + Y_MESH_MAX) / 2.0)
 
     if "U-Valley" in profile_type or "Asymmetric" in profile_type:
@@ -443,7 +498,7 @@ if dat_files_found > 0 and mesh_found:
             "Valley Center (Y)",
             min_value=float(Y_MESH_MIN),
             max_value=float(Y_MESH_MAX),
-            value=default_y_center,          # ← 1000 m for a 0–2000 m mesh
+            value=default_y_center,          # ← mesh midpoint (e.g. 1000 m)
             step=float(max(1.0, (Y_MESH_MAX - Y_MESH_MIN) / 1000.0)),
             key="y_center_slider",
             help=(
