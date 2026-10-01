@@ -1,0 +1,141 @@
+!echo on
+Header
+  !CHECK KEYWORDS Warn
+  Mesh DB "." "deformed_bedrock"
+  Include Path ""
+  Results Directory ""
+End
+
+Simulation
+  Max Output Level = 4
+  Coordinate System = "Cartesian 3D"
+  Coordinate Mapping(3) = 1 2 3
+  Simulation Type = "Steady"
+  Steady State Max Iterations = 1
+  Output Intervals = 1
+  Output File = "Stokes_ELA400_3D_diagnostic.result"
+  Post File = "Stokes_ELA400_3D_diagnostic.vtu"
+  Initialize Dirichlet Conditions = Logical False
+End
+
+Constants
+  Stefan Boltzmann = 5.67e-08
+End
+
+Body 1
+  Name = "Glacier"
+  Body Force = 1
+  Equation = 1
+  Material = 1
+  Initial Condition = 1
+End
+
+Equation 1
+  Name = "Equation1"
+  Convection = "computed"
+  Flow Solution Name = String "Flow Solution"
+  ! UPDATED: Only 2 solvers now. Mapper is gone.
+  Active Solvers(1) =  2
+End
+
+Initial Condition 1
+  Velocity 1 = 0.0
+  Velocity 2 = 0.0
+  Velocity 3 = 0.0
+  Pressure = 0.0
+  Depth = Real 0.0
+End
+
+! ==============================================================================
+! Solver 1: Flow Depth for postprocessing (Renumbered from Solver 2)
+! CRITICAL FIX: Increased tolerance to accept the pre-deformed Y-variation
+! ==============================================================================
+Solver 1
+  Exec Solver = "Never"
+  Equation = "HeightDepth"
+  Procedure = "StructuredProjectToPlane" "StructuredProjectToPlane"
+  Active Coordinate = Integer 3
+  Operator 1 = depth
+  Operator 2 = height
+  Dot Product Tolerance = Real 0.9
+End
+
+! ==============================================================================
+! Solver 2: The central 3D Stokes solver (Renumbered from Solver 3)
+! ==============================================================================
+Solver 2
+  Equation = "Navier-Stokes"
+  Optimize Bandwidth = Logical True
+  Linear System Solver = Direct
+  Linear System Direct Method = "UMFPACK"
+  Linear System Max Iterations = 5000
+  Linear System Convergence Tolerance = 1.0E-06
+  Linear System Abort Not Converged = False
+  Linear System Preconditioning = "ILU1"
+  Linear System Residual Output = 1
+  Flow Model = Stokes
+  Steady State Convergence Tolerance = 1.0E-05
+  Stabilization Method = Stabilized
+  Nonlinear System Convergence Tolerance = 1.0E-04
+  Nonlinear System Convergence Measure = Solution
+  Nonlinear System Max Iterations = 50
+  Nonlinear System Newton After Iterations = 3
+  Nonlinear System Newton After Tolerance = 1.0E-01
+  Exported Variable 1 = -dofs 3 "Mesh Velocity"
+End
+
+! ==============================================================================
+! Material & Body Forces
+! ==============================================================================
+Material 1
+  Name = "ice"
+  Density = Real $910.0*1.0E-06*(31556926.0)^(-2.0)
+  Viscosity Model = String "Glen"
+  Viscosity = Real 1.0
+  Glen Exponent = Real 3.0
+  Critical Shear Rate = Real 1.0e-10
+  Rate Factor 1 = Real 1.258e13
+  Rate Factor 2 = Real 6.046e28
+  Activation Energy 1 = Real 60e3
+  Activation Energy 2 = Real 139e3
+  Glen Enhancement Factor = Real 1.0
+  Limit Temperature = Real -10.0
+  Constant Temperature = Real -3.0
+End
+
+Body Force 1
+  Name = "BodyForce1"
+  Heat Source = 1
+  Flow BodyForce 1 = Real 0.0
+  Flow BodyForce 2 = Real 0.0
+  Flow BodyForce 3 = Real $-9.81 * (31556926.0)^(2.0)
+End
+
+! ==============================================================================
+! Boundary Conditions
+! CRITICAL FIX: "include" and "Surface" lines REMOVED so Elmer uses your 
+! pre-deformed mesh.nodes file exactly as it is.
+! ==============================================================================
+
+! Bedrock (Bottom face) - Boundary Group 2
+Boundary Condition 1
+  Name = "bedrock"
+  Target Boundaries = 2
+  Velocity 1 = Real 0.0e0
+  Velocity 2 = Real 0.0e0
+  Velocity 3 = Real 0.0e0
+End
+
+! Lateral Walls (All 4 side walls) - Boundary Group 1
+Boundary Condition 2
+  Name = "sides"
+  Target Boundaries = 1
+  Velocity 1 = Real 0.0e0
+  Velocity 2 = Real 0.0e0
+End
+
+! Surface (Top face) - Boundary Group 3
+Boundary Condition 3
+  Name = "surface"
+  Target Boundaries = 3
+End
