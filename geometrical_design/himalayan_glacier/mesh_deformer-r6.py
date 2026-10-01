@@ -34,32 +34,138 @@ EXPECTED_DAT_DIR = os.path.join(BASE_DIR, "surface_bedrock")
 EXPECTED_MESH_FILE = os.path.join(EXPECTED_MESH_DIR, "mesh.nodes")
 
 
-def find_mesh_nodes_file():
-    """Return the direct path to mesh.nodes, or None if it doesn't exist."""
+# ------------------------------------------------------------------------------
+# Diagnostic resolvers
+#
+# These do more than a plain `os.path.isfile` check. If the exact expected path
+# is missing, they inspect the directory and try to figure out WHY:
+#
+#   * Case mismatch         → `Mesh.nodes` instead of `mesh.nodes`
+#   * Hidden extension      → `mesh.nodes.txt` (Windows "hide extensions" trap)
+#   * Any single-file dir   → almost certainly the intended file with a typo
+#   * Multiple candidates   → list them so the user can see what's there
+#   * Directory missing     → say so explicitly
+#   * Directory empty       → say so explicitly (also catches >100 MB files
+#                             that GitHub silently refused to push)
+#
+# Returns (path_or_None, found_bool, human_readable_message)
+# ------------------------------------------------------------------------------
+def diagnose_mesh_file():
+    """Locate mesh.nodes, with a helpful diagnostic message when it's missing."""
+    # 1. Exact match — the happy path.
     if os.path.isfile(EXPECTED_MESH_FILE):
-        return EXPECTED_MESH_FILE
-    return None
+        return EXPECTED_MESH_FILE, True, ""
+
+    # 2. Directory exists? Then enumerate what's actually inside.
+    if os.path.isdir(EXPECTED_MESH_DIR):
+        files = os.listdir(EXPECTED_MESH_DIR)
+        # Only visible regular files (skip .gitkeep, subdirs, etc.)
+        visible_files = [
+            f for f in files
+            if not f.startswith(".") and os.path.isfile(os.path.join(EXPECTED_MESH_DIR, f))
+        ]
+
+        # Case-insensitive match: `Mesh.nodes`, `MESH.NODES`, ...
+        for f in visible_files:
+            if f.lower() == "mesh.nodes":
+                return (
+                    os.path.join(EXPECTED_MESH_DIR, f),
+                    True,
+                    f"⚠️ Case mismatch — using `{f}` instead of the expected `mesh.nodes`. "
+                    "Rename it on GitHub so future runs don't depend on this fallback.",
+                )
+
+        # Single file in the folder → almost certainly the intended file with a
+        # wrong name (most often `mesh.nodes.txt` from Windows hiding extensions).
+        if len(visible_files) == 1:
+            only = visible_files[0]
+            return (
+                os.path.join(EXPECTED_MESH_DIR, only),
+                True,
+                f"⚠️ Expected `mesh.nodes` but found `{only}` — auto-selecting it. "
+                "This is usually the Windows 'hidden .txt extension' trap; rename "
+                "the file on GitHub to remove the extra suffix.",
+            )
+
+        # More than one file → refuse to guess, list them all.
+        if len(visible_files) > 1:
+            return (
+                None,
+                False,
+                f"⚠️ `mesh.nodes` not found in `{EXPECTED_MESH_DIR}`.\n\n"
+                f"Files present: {', '.join(f'`{f}`' for f in visible_files)}",
+            )
+
+        # Directory exists but is empty (or only hidden/subdir entries).
+        return (
+            None,
+            False,
+            f"⚠️ Directory `{EXPECTED_MESH_DIR}` exists but is empty "
+            "(no visible files inside). If you did place `mesh.nodes` there "
+            "locally, it likely wasn't pushed — files >100 MB require Git LFS.",
+        )
+
+    # 3. Directory itself missing → the folder structure on the cloud differs
+    #    from what this script expects.
+    return (
+        None,
+        False,
+        f"⚠️ Directory `{EXPECTED_MESH_DIR}` does not exist.\n\n"
+        f"Expected layout:\n"
+        f"```\n{BASE_DIR}/\n"
+        f"├── undeformed_geometry/\n"
+        f"│   └── mesh.nodes\n"
+        f"└── surface_bedrock/\n"
+        f"    ├── steady_ELA5000_bedrock.dat\n"
+        f"    └── steady_ELA5000_surface.dat\n```",
+    )
 
 
-def find_dat_dir():
-    """Return the direct path to the surface_bedrock directory, or None."""
-    if os.path.isdir(EXPECTED_DAT_DIR) and glob.glob(os.path.join(EXPECTED_DAT_DIR, "*.dat")):
-        return EXPECTED_DAT_DIR
-    return None
+def diagnose_dat_dir():
+    """Return (dir_or_None, found_bool, diagnostic_message)."""
+    if os.path.isdir(EXPECTED_DAT_DIR):
+        dat_files = sorted(glob.glob(os.path.join(EXPECTED_DAT_DIR, "*.dat")))
+        if dat_files:
+            return EXPECTED_DAT_DIR, True, ""
+        # Directory exists but contains no .dat files — show what's in there.
+        visible_files = [
+            f for f in os.listdir(EXPECTED_DAT_DIR)
+            if not f.startswith(".") and os.path.isfile(os.path.join(EXPECTED_DAT_DIR, f))
+        ]
+        if visible_files:
+            return (
+                EXPECTED_DAT_DIR,
+                False,
+                f"⚠️ No `.dat` files in `{EXPECTED_DAT_DIR}`.\n\n"
+                f"Files present: {', '.join(f'`{f}`' for f in visible_files)}\n\n"
+                "Rename to the expected pattern (`*_surface.dat`, `*_bedrock.dat`) "
+                "or commit the missing files.",
+            )
+        return (
+            EXPECTED_DAT_DIR,
+            False,
+            f"⚠️ Directory `{EXPECTED_DAT_DIR}` exists but is empty.",
+        )
+    return (
+        None,
+        False,
+        f"⚠️ Directory `{EXPECTED_DAT_DIR}` does not exist.",
+    )
 
 
-mesh_nodes_file = find_mesh_nodes_file()
-mesh_found = mesh_nodes_file is not None
+# Run the diagnostics once at import time (cheap: one os.listdir per folder).
+mesh_nodes_file, mesh_found, mesh_diagnostic_msg = diagnose_mesh_file()
+DAT_DIR, dat_dir_found, dat_diagnostic_msg = diagnose_dat_dir()
 MESH_DIR = EXPECTED_MESH_DIR
-DAT_DIR = EXPECTED_DAT_DIR
-
-# NOTE: os.makedirs() intentionally NOT called — creating empty folders
-# hides the real problem (missing/misplaced files) instead of surfacing it.
 
 st.title("🏔️ Glacier Mesh Deformer & Analyzer")
 st.caption("Loads mesh and profile data, applies Y-direction variations, and exports updated meshes.")
 
-st.info(f"📁 **Mesh directory:** `{MESH_DIR}`\n📁 **Data directory:** `{DAT_DIR}`")
+st.info(
+    f"📁 **Base directory:** `{BASE_DIR}`  \n"
+    f"📁 **Mesh directory:** `{MESH_DIR}`  \n"
+    f"📁 **Data directory:** `{DAT_DIR}`"
+)
 
 if st.button("🔄 Reload Data", key="reload_data_btn"):
     st.cache_data.clear()
@@ -74,37 +180,46 @@ if st.button("🔄 Reload Data", key="reload_data_btn"):
 # ==========================================
 @st.cache_data
 def load_data():
-    dat_files = sorted(glob.glob(os.path.join(DAT_DIR, "*.dat")))
-    mesh_found = mesh_nodes_file is not None and os.path.isfile(mesh_nodes_file)
-    return dat_files, mesh_nodes_file, len(dat_files), mesh_found
+    dat_files = sorted(glob.glob(os.path.join(DAT_DIR, "*.dat"))) if DAT_DIR else []
+    return dat_files, len(dat_files)
 
-dat_files, mesh_nodes_file, dat_files_found, mesh_found = load_data()
 
+dat_files, dat_files_found = load_data()
+
+# ---- .dat files -----------------------------------------------------------
 if dat_files_found == 0:
     st.warning(
-        f"⚠️ No `.dat` files found in `{DAT_DIR}`.\n\n"
-        "Please ensure `steady_ELA5000_bedrock.dat` and `steady_ELA5000_surface.dat` "
-        "are committed to GitHub at exactly that path."
+        f"{dat_diagnostic_msg}\n\n"
+        "**Checklist for `.dat` files on Streamlit Cloud:**\n"
+        "1. File names match exactly (Linux is case-sensitive).\n"
+        "2. The files are actually committed and pushed to GitHub — check the "
+        "file tree on github.com, not just your local folder.\n"
+        "3. The `surface_bedrock` folder isn't listed in `.gitignore`."
     )
 else:
     st.success(f"✅ Found {dat_files_found} `.dat` file(s) in `{DAT_DIR}`.")
-    # Show the actual filenames found so the user can immediately spot a missing file
     st.caption("Files discovered: " + ", ".join(f"`{os.path.basename(f)}`" for f in dat_files))
 
+# ---- mesh.nodes -----------------------------------------------------------
 if not mesh_found:
     st.warning(
-        f"⚠️ **`mesh.nodes` not found** at the expected location:\n\n"
-        f"`{EXPECTED_MESH_FILE}`\n\n"
-        "On Streamlit Cloud the app only sees files **committed to GitHub**, so check:\n"
-        "1. `mesh.nodes` was actually pushed into `undeformed_geometry/` "
-        "(look at the file tree on github.com, not just your local disk).\n"
-        "2. Exact spelling **and capitalization** — Linux is case-sensitive, so "
-        "`Undeformed_Geometry`/`Mesh.nodes` ≠ `undeformed_geometry`/`mesh.nodes`.\n"
-        "3. The folder isn't excluded by `.gitignore`.\n"
-        "After fixing, push and press **🔄 Reload Data** (or reboot the app)."
+        f"{mesh_diagnostic_msg}\n\n"
+        "**Why this happens on Streamlit Cloud (even if it looks correct locally):**\n"
+        "1. **Hidden extensions** — Windows may have silently saved it as "
+        "`mesh.nodes.txt`. The diagnostic above reveals the true filename.\n"
+        "2. **Case sensitivity** — Linux is strictly case-sensitive. "
+        "`Mesh.nodes` ≠ `mesh.nodes`.\n"
+        "3. **Git push / file size** — the file exists *locally* but wasn't pushed "
+        "to GitHub. Files >100 MB require Git LFS. Check the actual github.com "
+        "file tree, not your local folder.\n"
+        "4. **`.gitignore`** — ensure `.nodes` files or the folder aren't ignored.\n\n"
+        "After fixing, commit, push, and press **🔄 Reload Data**."
     )
 else:
-    st.success(f"✅ Found `mesh.nodes` at `{mesh_nodes_file}`.")
+    if mesh_diagnostic_msg:
+        st.warning(f"✅ Mesh file located — but note: {mesh_diagnostic_msg}")
+    else:
+        st.success(f"✅ Found `mesh.nodes` at `{mesh_nodes_file}`.")
 
 # ==========================================
 # 3. Main App Logic (Only runs if files are found)
