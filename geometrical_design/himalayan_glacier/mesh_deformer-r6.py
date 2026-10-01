@@ -15,19 +15,78 @@ st.set_page_config(page_title="Glacier Mesh Deformer & Analyzer", layout="wide")
 # Get the absolute path of the directory containing this script
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Define paths (tries direct relative path first)
-DAT_DIR = os.path.join(BASE_DIR, "surface_bedrock")
-MESH_DIR = os.path.join(BASE_DIR, "undeformed_geometry")
 
-# Fallback: If the above don't exist, try the nested structure from your GitHub repo
-if not os.path.exists(DAT_DIR):
-    DAT_DIR = os.path.join(BASE_DIR, "geometrical_design", "valley-within-glacier", "surface_bedrock")
-if not os.path.exists(MESH_DIR):
-    MESH_DIR = os.path.join(BASE_DIR, "geometrical_design", "valley-within-glacier", "undeformed_geometry")
+def _prune(dirnames):
+    dirnames[:] = [d for d in dirnames
+                   if not d.startswith(".")
+                   and d not in ("__pycache__", "node_modules", "venv", "site-packages")]
 
-# Ensure directories exist to prevent crashes
-os.makedirs(MESH_DIR, exist_ok=True)
-os.makedirs(DAT_DIR, exist_ok=True)
+
+def _bounded_walk(root, max_depth=5):
+    root = os.path.normpath(os.path.abspath(root))
+    if not os.path.isdir(root):
+        return
+    base = root.rstrip(os.sep).count(os.sep)
+    for dirpath, dirnames, filenames in os.walk(root):
+        if dirpath.rstrip(os.sep).count(os.sep) - base >= max_depth:
+            dirnames[:] = []          # stop descending deeper
+            continue
+        _prune(dirnames)
+        yield dirpath, filenames
+
+
+def find_mesh_nodes_file():
+    candidates = [
+        # New layout: data folders directly under the app folder
+        os.path.join(BASE_DIR, "undeformed_geometry", "mesh.nodes"),
+        # Legacy nested layout (old fallback, kept for compatibility)
+        os.path.join(BASE_DIR, "geometrical_design", "valley-within-glacier",
+                     "undeformed_geometry", "mesh.nodes"),
+        # Legacy layout as a SIBLING of the app folder
+        # (app moved: valley-within-glacier → himalayan_glacier)
+        os.path.join(BASE_DIR, os.pardir, "valley-within-glacier",
+                     "undeformed_geometry", "mesh.nodes"),
+    ]
+    for c in candidates:
+        c = os.path.normpath(c)
+        if os.path.isfile(c):
+            return c
+    # Last resort: search app folder + repo root (its parent)
+    for root in (BASE_DIR, os.path.join(BASE_DIR, os.pardir)):
+        for dirpath, filenames in _bounded_walk(root):
+            if "mesh.nodes" in filenames:
+                return os.path.join(dirpath, "mesh.nodes")
+    return None
+
+
+def find_dat_dir():
+    candidates = [
+        os.path.join(BASE_DIR, "surface_bedrock"),
+        os.path.join(BASE_DIR, "geometrical_design", "valley-within-glacier", "surface_bedrock"),
+        os.path.join(BASE_DIR, os.pardir, "valley-within-glacier", "surface_bedrock"),
+    ]
+    for c in candidates:
+        c = os.path.normpath(c)
+        if os.path.isdir(c) and glob.glob(os.path.join(c, "*.dat")):
+            return c
+    best_dir, best_n = None, 0
+    for root in (BASE_DIR, os.path.join(BASE_DIR, os.pardir)):
+        for dirpath, filenames in _bounded_walk(root):
+            n = sum(1 for f in filenames if f.lower().endswith(".dat"))
+            if n > best_n:
+                best_dir, best_n = dirpath, n
+    return best_dir
+
+
+mesh_nodes_file = find_mesh_nodes_file()
+mesh_found = mesh_nodes_file is not None
+MESH_DIR = (os.path.dirname(mesh_nodes_file) if mesh_found
+            else os.path.join(BASE_DIR, "undeformed_geometry"))
+DAT_DIR = find_dat_dir() or os.path.join(BASE_DIR, "surface_bedrock")
+
+# NOTE: os.makedirs() removed — creating empty folders only hides the
+# real problem. Delete the empty geometrical_design/ tree it already
+# created inside himalayan_glacier if you ran this locally.
 
 st.title("🏔️ Glacier Mesh Deformer & Analyzer")
 st.caption("Loads mesh and profile data, applies Y-direction variations, and exports updated meshes.")
@@ -48,26 +107,35 @@ if st.button("🔄 Reload Data", key="reload_data_btn"):
 @st.cache_data
 def load_data():
     dat_files = sorted(glob.glob(os.path.join(DAT_DIR, "*.dat")))
-    mesh_nodes_file = os.path.join(MESH_DIR, "mesh.nodes")
-
-    dat_files_found = len(dat_files)
-    mesh_found = os.path.exists(mesh_nodes_file)
-
-    return dat_files, mesh_nodes_file, dat_files_found, mesh_found
+    mesh_found = mesh_nodes_file is not None and os.path.isfile(mesh_nodes_file)
+    return dat_files, mesh_nodes_file, len(dat_files), mesh_found
 
 dat_files, mesh_nodes_file, dat_files_found, mesh_found = load_data()
 
 if dat_files_found == 0:
-    st.warning(f"⚠️ No `.dat` files found in `{DAT_DIR}`. Please ensure `steady_ELA400_bedrock.dat` and `steady_ELA400_surface.dat` are in this directory.")
+    st.warning(
+        f"⚠️ No `.dat` files found in `{DAT_DIR}`. Please ensure "
+        "`steady_ELA5000_bedrock.dat` and `steady_ELA5000_surface.dat` are in this directory."
+    )
 else:
     st.success(f"✅ Found {dat_files_found} `.dat` file(s) in `{DAT_DIR}`.")
     # Show the actual filenames found so the user can immediately spot a missing file
     st.caption("Files discovered: " + ", ".join(f"`{os.path.basename(f)}`" for f in dat_files))
 
 if not mesh_found:
-    st.warning(f"⚠️ Mesh file not found at `{mesh_nodes_file}`. Please ensure `mesh.nodes` is in this directory.")
+    st.warning(
+        "⚠️ **`mesh.nodes` not found anywhere in the repo** (searched the app folder "
+        f"and the repo root above it). On Streamlit Cloud the app only sees files "
+        "**committed to GitHub**, so check:\n"
+        "1. `mesh.nodes` was actually pushed into the new `himalayan_glacier` folder "
+        "(look at the file tree on github.com, not just your local disk).\n"
+        "2. Exact spelling **and capitalization** — Linux is case-sensitive, so "
+        "`Undeformed_Geometry`/`Mesh.nodes` ≠ `undeformed_geometry`/`mesh.nodes`.\n"
+        "3. The folder isn't excluded by `.gitignore`.\n"
+        "After fixing, push and press **🔄 Reload Data** (or reboot the app)."
+    )
 else:
-    st.success(f"✅ Found `mesh.nodes` in `{MESH_DIR}`.")
+    st.success(f"✅ Found `mesh.nodes` at `{mesh_nodes_file}`.")
 
 # ==========================================
 # 3. Main App Logic (Only runs if files are found)
@@ -170,7 +238,7 @@ if dat_files_found > 0 and mesh_found:
             st.sidebar.error(
                 "⚠️ Only **one** `.dat` file exists in the data folder, so both "
                 "dropdowns point at it. Add a second `.dat` file (e.g. "
-                "`steady_ELA400_surface.dat`) to the `surface_bedrock` folder "
+                "`steady_ELA5000_surface.dat`) to the `surface_bedrock` folder "
                 "and click **🔄 Reload Data**."
             )
         else:
