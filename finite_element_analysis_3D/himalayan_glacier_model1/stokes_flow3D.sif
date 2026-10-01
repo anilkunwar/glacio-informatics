@@ -1,7 +1,7 @@
 !echo on
 Header
   !CHECK KEYWORDS Warn
-  Mesh DB "." "deformed_bedrock"
+  Mesh DB "." "himalayan_glacier3d"
   Include Path ""
   Results Directory ""
 End
