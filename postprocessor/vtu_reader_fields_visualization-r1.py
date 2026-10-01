@@ -23,19 +23,42 @@ st.set_page_config(
 # =============================================
 COLORMAPS = ['Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Blues', 'Reds', 'Greens', 'Jet', 'Rainbow']
 
+# PATCH 1 — file discovery now handles .pvtu, bare .vtu, and recursive subfolders
 @st.cache_data
 def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA400_3D_diagnostic"):
     """
-    Loads Elmer VTU files from the specified directory.
-    Returns a dictionary with mesh data and field information.
+    Loads Elmer VTU/PVTU files from the specified directory.
+    Handles serial (.vtu), parallel (.pvtu), and results in subfolders.
     """
-    search_pattern = os.path.join(directory, f"{prefix}*.vtu")
-    vtu_files = sorted(glob.glob(search_pattern))
-    
+    directory = directory.strip()
+    prefix = prefix.strip()
+
+    if not os.path.isdir(directory):
+        return None
+
+    def discover(exts, recursive=False):
+        files = []
+        for ext in exts:
+            if recursive:
+                files += glob.glob(os.path.join(directory, "**", f"{prefix}*{ext}"), recursive=True)
+            else:
+                files += glob.glob(os.path.join(directory, f"{prefix}*{ext}"))
+        return sorted(set(files))
+
+    # 1) Serial: prefix_t0001.vtu | Parallel: prefix_t0001.pvtu (meshio merges pieces)
+    vtu_files = discover((".vtu", ".pvtu"))
+
+    # 2) Any .vtu/.pvtu directly in the directory
     if not vtu_files:
-        # Fallback: try any .vtu in the directory
-        vtu_files = sorted(glob.glob(os.path.join(directory, "*.vtu")))
-        
+        for ext in (".vtu", ".pvtu"):
+            vtu_files = sorted(glob.glob(os.path.join(directory, f"*{ext}")))
+            if vtu_files:
+                break
+
+    # 3) Recursive search (files often land in a results/ subfolder)
+    if not vtu_files:
+        vtu_files = discover((".vtu", ".pvtu"), recursive=True)
+
     if not vtu_files:
         return None
 
@@ -48,20 +71,20 @@ def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA400_3D_diagnost
 
     points = mesh0.points.astype(np.float32)
     n_pts = len(points)
-    
+
     # Look for surface triangles first. Elmer 3D usually outputs tetrahedra.
     triangles = None
     for cell_block in mesh0.cells:
         if cell_block.type == "triangle":
             triangles = cell_block.data.astype(np.int32)
             break
-    
+
     has_surface = triangles is not None
 
     # Extract fields from the first timestep
     fields = {}
     field_info = {}
-    
+
     for key, arr in mesh0.point_data.items():
         arr = arr.astype(np.float32)
         if arr.ndim == 1:
@@ -102,13 +125,15 @@ def main():
 
     # Sidebar Configuration
     st.sidebar.header("⚙️ Configuration")
-    
+
     # Defaults pulled directly from your .sif file
     default_dir = "himalayan_glacier3d"
     data_dir = st.sidebar.text_input("Results Directory", value=default_dir)
     prefix = st.sidebar.text_input("File Prefix", value="Stokes_ELA400_3D_diagnostic")
-    
+
     if st.sidebar.button("🔄 Load Data", type="primary"):
+        # PATCH 2 — never reuse a cached failed load (stale None trap)
+        load_elmer_vtu_data.clear()
         st.session_state.data = load_elmer_vtu_data(data_dir, prefix)
         st.session_state.loaded = True
 
@@ -117,9 +142,22 @@ def main():
         return
 
     data = st.session_state.data
+
+    # PATCH 3 — debug panel replaces the old "if data is None:" block
     if data is None:
-        st.error(f"No `.vtu` files found in `{data_dir}` matching prefix `{prefix}`.")
-        st.info("💡 Tip: Ensure your Elmer `.sif` has `Output Format = vtu` in the `ResultOutputSolver` block.")
+        st.error(f"No `.vtu`/`.pvtu` files found in `{data_dir}` matching prefix `{prefix}`.")
+        with st.expander("🔍 Debug — why?", expanded=True):
+            st.write(f"Streamlit working directory: `{os.getcwd()}`")
+            if not os.path.isdir(data_dir):
+                st.write(f"❌ `{data_dir}` does **not exist** relative to that directory. "
+                         "Use an absolute path or launch Streamlit from the parent folder.")
+            else:
+                entries = sorted(os.listdir(data_dir))
+                st.write(f"✅ Directory exists, {len(entries)} entries:")
+                st.code("\n".join(entries[:60]) if entries else "(empty)")
+                found = [f for f in entries if f.lower().endswith((".vtu", ".pvtu"))]
+                if found:
+                    st.success(f"Elmer output present: {found[:8]} — adjust the File Prefix to match.")
         return
 
     st.success(f"✅ Loaded {data['n_timesteps']} timestep(s) successfully!")
@@ -129,18 +167,18 @@ def main():
     # -----------------------------------------
     st.markdown("### 🎛️ Visualization Controls")
     col1, col2, col3, col4 = st.columns(4)
-    
+
     with col1:
         available_fields = list(data['field_info'].keys())
         default_field = "Velocity" if "Velocity" in available_fields else (available_fields[0] if available_fields else None)
         field = st.selectbox("Select Field", available_fields, index=available_fields.index(default_field) if default_field else 0)
-    
+
     with col2:
         timestep = st.slider("Timestep", 0, data['n_timesteps'] - 1, 0)
-    
+
     with col3:
         colormap = st.selectbox("Colormap", COLORMAPS, index=0)
-        
+
     with col4:
         z_exag = st.slider("Z Exaggeration", 1.0, 100.0, 10.0, 1.0, help="Glaciers are thin; exaggerate Z to see thickness.")
 
@@ -153,10 +191,10 @@ def main():
     # -----------------------------------------
     pts = data['points'].copy()
     pts[:, 2] *= z_exag  # Apply Z exaggeration
-    
+
     kind = data['field_info'][field]
     raw = data['fields'][field][timestep]
-    
+
     if kind == "scalar":
         values = np.where(np.isnan(raw), 0, raw)
         label = field
@@ -181,10 +219,10 @@ def main():
     # PLOTTING
     # -----------------------------------------
     st.markdown(f"### 📈 {label} at Timestep {timestep + 1}")
-    
+
     cmin = float(np.min(plot_vals))
     cmax = float(np.max(plot_vals))
-    
+
     col_a, col_b = st.columns(2)
     with col_a:
         auto_scale = st.checkbox("Auto Color Scale", value=True)
@@ -196,7 +234,7 @@ def main():
             cmin, cmax = None, None
 
     fig = go.Figure()
-    
+
     if data['has_surface']:
         st.info("Rendering surface mesh.")
         fig.add_trace(go.Mesh3d(
@@ -230,7 +268,7 @@ def main():
         height=700,
         margin=dict(l=0, r=0, t=40, b=0),
         scene=dict(
-            aspectmode="data", 
+            aspectmode="data",
             camera=dict(eye=dict(x=1.5, y=1.5, z=0.6)), # Angled top-down view ideal for glaciers
             xaxis=dict(title="X (m)"),
             yaxis=dict(title="Y (m)"),
