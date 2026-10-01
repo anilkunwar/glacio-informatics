@@ -7,12 +7,6 @@ st.set_page_config(page_title="Profile Transformer", layout="wide")
 st.title("🔄 Glacier Profile Data Transformer")
 st.markdown("""
 This app converts raw CSV profile data into the `.dat` format required by the Glacier Mesh Deformer app.
-**Transformations applied:**
-1. Extracts `x` and `y` columns (ignoring index columns).
-2. Renames `y` to `Z` (elevation).
-3. Applies `X_new = 8000 - X` to flip the X axis.
-4. Sorts `X` in strictly ascending order (required for `np.interp`).
-5. Exports as a space-separated `.dat` file without headers.
 """)
 
 # Input area
@@ -24,15 +18,16 @@ input_text = st.text_area(
 )
 uploaded_file = st.file_uploader("Or upload a CSV/TXT file:", type=['csv', 'txt'])
 
-offset = st.number_input("Enter X-Offset value:", value=8000, step=100)
+# Transformation options
+st.sidebar.header("⚙️ Transformation Options")
+scale_to_zero = st.sidebar.checkbox("Shift X-axis to start at 0", value=True)
+offset = st.sidebar.number_input("X-Offset (if not scaling to 0):", value=8000, step=100, disabled=scale_to_zero)
 
 # Process the data
 df = None
 if uploaded_file is not None:
-    # Auto-detect separator (handles commas, pipes, tabs, spaces)
     df = pd.read_csv(uploaded_file, sep=None, engine='python')
 elif input_text:
-    # Parse pasted text
     df = pd.read_csv(StringIO(input_text), sep=None, engine='python')
 
 if df is not None:
@@ -47,20 +42,23 @@ if df is not None:
         # Create new transformed dataframe
         trans_df = pd.DataFrame()
         
-        # Apply X transformation: X^T = 8000 - X
-        trans_df['X'] = offset - pd.to_numeric(df['x'], errors='coerce')
+        x_vals = pd.to_numeric(df['x'], errors='coerce')
         
+        if scale_to_zero:
+            # X_new = X_max - X (Shifts min X to 0, flips to keep lower X at lower Z)
+            trans_df['X'] = x_vals.max() - x_vals
+        else:
+            # X_new = Offset - X (Original method)
+            trans_df['X'] = offset - x_vals
+            
         # Rename Y to Z
         trans_df['Z'] = pd.to_numeric(df['y'], errors='coerce')
         
-        # Drop any rows that became NaN due to formatting issues
+        # Drop any rows that became NaN
         trans_df = trans_df.dropna()
         
         # CRITICAL: Sort by X ascending. 
-        # If X=0 becomes 8000 and X=2500 becomes 5500, np.interp needs strictly increasing X.
         trans_df = trans_df.sort_values('X').reset_index(drop=True)
-        
-        # Drop duplicate X values just in case
         trans_df = trans_df.drop_duplicates(subset='X').reset_index(drop=True)
         
         st.write("### Transformed Data (Ready for .dat)")
@@ -79,14 +77,14 @@ if df is not None:
             st.subheader("Transformed Profile")
             fig2 = go.Figure()
             fig2.add_trace(go.Scatter(x=trans_df['X'], y=trans_df['Z'], mode='lines+markers', name='Transformed', line=dict(color='red')))
-            fig2.update_layout(xaxis_title="New X (8000 - X)", yaxis_title="Z (Elevation)", margin=dict(l=0, r=0, t=30, b=0))
+            fig2.update_layout(xaxis_title="New X (Starts at 0)", yaxis_title="Z (Elevation)", margin=dict(l=0, r=0, t=30, b=0))
             st.plotly_chart(fig2, use_container_width=True)
             
         # Convert to .dat format (space-separated, no header, no index)
         dat_str = trans_df.to_csv(sep=' ', index=False, header=False, float_format='%.4f')
         
         st.header("2. Export Data")
-        file_name = st.text_input("Output Filename:", "surface_transformed.dat")
+        file_name = st.text_input("Output Filename:", "steady_ELA5000_bedrock.dat")
         
         st.download_button(
             label="⬇️ Download Transformed .dat File",
