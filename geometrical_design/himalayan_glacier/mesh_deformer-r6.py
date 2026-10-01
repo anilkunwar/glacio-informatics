@@ -15,123 +15,51 @@ st.set_page_config(page_title="Glacier Mesh Deformer & Analyzer", layout="wide")
 # Get the absolute path of the directory containing this script
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# ------------------------------------------------------------------------------
+# Direct path resolution — single source of truth is `himalayan_glacier`.
+#
+# The app now has exactly ONE supported layout:
+#
+#     <repo>/geometrical_design/himalayan_glacier/
+#         ├── undeformed_geometry/mesh.nodes
+#         └── surface_bedrock/*.dat
+#
+# No legacy `valley-within-glacier` candidates, no directory walking, no
+# fallback search. If a file isn't where it's expected, the app says so
+# explicitly instead of silently loading a stale copy from an old folder.
+# ------------------------------------------------------------------------------
 
-def _prune(dirnames):
-    dirnames[:] = [d for d in dirnames
-                   if not d.startswith(".")
-                   and d not in ("__pycache__", "node_modules", "venv", "site-packages")]
-
-
-def _bounded_walk(root, max_depth=5):
-    root = os.path.normpath(os.path.abspath(root))
-    if not os.path.isdir(root):
-        return
-    base = root.rstrip(os.sep).count(os.sep)
-    for dirpath, dirnames, filenames in os.walk(root):
-        if dirpath.rstrip(os.sep).count(os.sep) - base >= max_depth:
-            dirnames[:] = []          # stop descending deeper
-            continue
-        _prune(dirnames)
-        yield dirpath, filenames
+# Expected locations (used for both lookup and error messages)
+EXPECTED_MESH_DIR = os.path.join(
+    BASE_DIR, "geometrical_design", "himalayan_glacier", "undeformed_geometry"
+)
+EXPECTED_DAT_DIR = os.path.join(
+    BASE_DIR, "geometrical_design", "himalayan_glacier", "surface_bedrock"
+)
+EXPECTED_MESH_FILE = os.path.join(EXPECTED_MESH_DIR, "mesh.nodes")
 
 
 def find_mesh_nodes_file():
-    """
-    Locate `mesh.nodes`, preferring the CURRENT layout
-    (`geometrical_design/himalayan_glacier/...`) over any stale legacy copy.
-
-    Ordering matters: explicit candidates are checked first, then a bounded
-    filesystem walk. The walk itself is ordered so the `himalayan_glacier`
-    tree is searched before the legacy `valley-within-glacier` tree, in case
-    an old `mesh.nodes` is still sitting around in the repo.
-    """
-    candidates = [
-        # New layout: data folders directly under the app folder
-        os.path.join(BASE_DIR, "undeformed_geometry", "mesh.nodes"),
-        # CURRENT layout: app folder is inside geometrical_design/himalayan_glacier
-        os.path.join(BASE_DIR, "geometrical_design", "himalayan_glacier",
-                     "undeformed_geometry", "mesh.nodes"),
-        # CURRENT layout: from the app folder, step up into geometrical_design
-        os.path.join(BASE_DIR, os.pardir, "himalayan_glacier",
-                     "undeformed_geometry", "mesh.nodes"),
-        # Legacy nested layout (old fallback, kept for compatibility)
-        os.path.join(BASE_DIR, "geometrical_design", "valley-within-glacier",
-                     "undeformed_geometry", "mesh.nodes"),
-        # Legacy layout as a SIBLING of the app folder
-        os.path.join(BASE_DIR, os.pardir, "valley-within-glacier",
-                     "undeformed_geometry", "mesh.nodes"),
-    ]
-    for c in candidates:
-        c = os.path.normpath(c)
-        if os.path.isfile(c):
-            return c
-
-    # Last resort: bounded walk. Search himalayan_glacier first so that if a
-    # stale valley-within-glacier/mesh.nodes is still present, it doesn't win.
-    preferred_roots = [
-        os.path.join(BASE_DIR, "geometrical_design", "himalayan_glacier"),
-        os.path.join(BASE_DIR, os.pardir, "himalayan_glacier"),
-        BASE_DIR,
-        os.path.join(BASE_DIR, os.pardir),
-    ]
-    seen = set()
-    for root in preferred_roots:
-        root = os.path.normpath(root)
-        if root in seen:
-            continue
-        seen.add(root)
-        for dirpath, filenames in _bounded_walk(root):
-            if "mesh.nodes" in filenames:
-                return os.path.join(dirpath, "mesh.nodes")
+    """Return the direct path to mesh.nodes, or None if it doesn't exist."""
+    if os.path.isfile(EXPECTED_MESH_FILE):
+        return EXPECTED_MESH_FILE
     return None
 
 
 def find_dat_dir():
-    """
-    Locate the directory containing the profile `.dat` files, preferring the
-    CURRENT `himalayan_glacier` layout over any stale legacy copy.
-    """
-    candidates = [
-        os.path.join(BASE_DIR, "surface_bedrock"),
-        os.path.join(BASE_DIR, "geometrical_design", "himalayan_glacier", "surface_bedrock"),
-        os.path.join(BASE_DIR, os.pardir, "himalayan_glacier", "surface_bedrock"),
-        os.path.join(BASE_DIR, "geometrical_design", "valley-within-glacier", "surface_bedrock"),
-        os.path.join(BASE_DIR, os.pardir, "valley-within-glacier", "surface_bedrock"),
-    ]
-    for c in candidates:
-        c = os.path.normpath(c)
-        if os.path.isdir(c) and glob.glob(os.path.join(c, "*.dat")):
-            return c
-
-    best_dir, best_n = None, 0
-    preferred_roots = [
-        os.path.join(BASE_DIR, "geometrical_design", "himalayan_glacier"),
-        os.path.join(BASE_DIR, os.pardir, "himalayan_glacier"),
-        BASE_DIR,
-        os.path.join(BASE_DIR, os.pardir),
-    ]
-    seen = set()
-    for root in preferred_roots:
-        root = os.path.normpath(root)
-        if root in seen:
-            continue
-        seen.add(root)
-        for dirpath, filenames in _bounded_walk(root):
-            n = sum(1 for f in filenames if f.lower().endswith(".dat"))
-            if n > best_n:
-                best_dir, best_n = dirpath, n
-    return best_dir
+    """Return the direct path to the surface_bedrock directory, or None."""
+    if os.path.isdir(EXPECTED_DAT_DIR) and glob.glob(os.path.join(EXPECTED_DAT_DIR, "*.dat")):
+        return EXPECTED_DAT_DIR
+    return None
 
 
 mesh_nodes_file = find_mesh_nodes_file()
 mesh_found = mesh_nodes_file is not None
-MESH_DIR = (os.path.dirname(mesh_nodes_file) if mesh_found
-            else os.path.join(BASE_DIR, "undeformed_geometry"))
-DAT_DIR = find_dat_dir() or os.path.join(BASE_DIR, "surface_bedrock")
+MESH_DIR = EXPECTED_MESH_DIR
+DAT_DIR = EXPECTED_DAT_DIR
 
-# NOTE: os.makedirs() removed — creating empty folders only hides the
-# real problem. Delete the empty geometrical_design/ tree it already
-# created inside himalayan_glacier if you ran this locally.
+# NOTE: os.makedirs() intentionally NOT called — creating empty folders
+# hides the real problem (missing/misplaced files) instead of surfacing it.
 
 st.title("🏔️ Glacier Mesh Deformer & Analyzer")
 st.caption("Loads mesh and profile data, applies Y-direction variations, and exports updated meshes.")
@@ -159,8 +87,9 @@ dat_files, mesh_nodes_file, dat_files_found, mesh_found = load_data()
 
 if dat_files_found == 0:
     st.warning(
-        f"⚠️ No `.dat` files found in `{DAT_DIR}`. Please ensure "
-        "`steady_ELA5000_bedrock.dat` and `steady_ELA5000_surface.dat` are in this directory."
+        f"⚠️ No `.dat` files found in `{DAT_DIR}`.\n\n"
+        "Please ensure `steady_ELA5000_bedrock.dat` and `steady_ELA5000_surface.dat` "
+        "are committed to GitHub at exactly that path."
     )
 else:
     st.success(f"✅ Found {dat_files_found} `.dat` file(s) in `{DAT_DIR}`.")
@@ -169,10 +98,11 @@ else:
 
 if not mesh_found:
     st.warning(
-        "⚠️ **`mesh.nodes` not found anywhere in the repo** (searched the app folder "
-        f"and the repo root above it). On Streamlit Cloud the app only sees files "
-        "**committed to GitHub**, so check:\n"
-        "1. `mesh.nodes` was actually pushed into the new `himalayan_glacier` folder "
+        f"⚠️ **`mesh.nodes` not found** at the expected location:\n\n"
+        f"`{EXPECTED_MESH_FILE}`\n\n"
+        "On Streamlit Cloud the app only sees files **committed to GitHub**, so check:\n"
+        "1. `mesh.nodes` was actually pushed into "
+        "`geometrical_design/himalayan_glacier/undeformed_geometry/` "
         "(look at the file tree on github.com, not just your local disk).\n"
         "2. Exact spelling **and capitalization** — Linux is case-sensitive, so "
         "`Undeformed_Geometry`/`Mesh.nodes` ≠ `undeformed_geometry`/`mesh.nodes`.\n"
@@ -181,17 +111,6 @@ if not mesh_found:
     )
 else:
     st.success(f"✅ Found `mesh.nodes` at `{mesh_nodes_file}`.")
-    # Warn if the auto-discovery picked up the legacy valley-within-glacier copy
-    if "valley-within-glacier" in mesh_nodes_file:
-        st.warning(
-            "⚠️ The loaded `mesh.nodes` lives in the **legacy** `valley-within-glacier` "
-            "folder. If you intended to use the file in `himalayan_glacier/undeformed_geometry/`, "
-            "either:\n"
-            "1. Delete/rename the stale `geometrical_design/valley-within-glacier/"
-            "undeformed_geometry/mesh.nodes` in your repo, or\n"
-            "2. Push the new `mesh.nodes` into `himalayan_glacier/undeformed_geometry/` "
-            "and press **🔄 Reload Data**."
-        )
 
 # ==========================================
 # 3. Main App Logic (Only runs if files are found)
