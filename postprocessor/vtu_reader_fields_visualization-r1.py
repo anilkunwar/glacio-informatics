@@ -4,6 +4,7 @@ import glob
 import zipfile
 import numpy as np
 import plotly.graph_objects as go
+import matplotlib.pyplot as plt
 import meshio
 import warnings
 
@@ -20,78 +21,68 @@ st.set_page_config(
 )
 
 # =============================================
-# CONSTANTS & HELPERS
+# PATH CONFIGURATION (Cloud-Safe)
 # =============================================
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DIR_NAME = "himalayan_glacier3d"
+DATA_DIR = os.path.join(SCRIPT_DIR, DEFAULT_DIR_NAME)
+
 COLORMAPS = ['Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Blues', 'Reds', 'Greens', 'Jet', 'Rainbow']
 
-
-# NEW (B3) — self-extract <directory>.zip on first load if the folder is missing.
-# Handles both "zip contains the folder" and "zip contains bare files" layouts.
+# =============================================
+# DATA EXTRACTION & LOADING
+# =============================================
 @st.cache_data
 def ensure_data_dir(directory: str) -> str:
-    """Extract <directory>.zip (repo root or data/) once if the folder is missing."""
+    """Self-extract <directory>.zip on first load if the folder is missing."""
     if os.path.isdir(directory):
         return directory
 
-    base = os.path.basename(directory.rstrip("/"))
-    for zpath in (f"{directory}.zip", os.path.join("data", f"{base}.zip")):
+    base = os.path.basename(directory)
+    # Check root and 'data/' subfolder for the zip
+    zip_paths = [
+        os.path.join(SCRIPT_DIR, f"{base}.zip"),
+        os.path.join(SCRIPT_DIR, "data", f"{base}.zip")
+    ]
+    
+    for zpath in zip_paths:
         if not os.path.isfile(zpath):
             continue
-        with zipfile.ZipFile(zpath) as zf:
-            names = [n for n in zf.namelist() if not n.endswith("/")]
-            tops = {n.split("/")[0] for n in names}
-            if tops == {base}:          # zip already contains the folder
-                zf.extractall(".")
-            else:                        # bare files -> extract into the folder
-                os.makedirs(directory, exist_ok=True)
-                zf.extractall(directory)
-        return directory
+        try:
+            with zipfile.ZipFile(zpath) as zf:
+                names = [n for n in zf.namelist() if not n.endswith("/")]
+                tops = {n.split("/")[0] for n in names}
+                if tops == {base}:          # zip already contains the folder
+                    zf.extractall(SCRIPT_DIR)
+                else:                       # bare files -> extract into the folder
+                    os.makedirs(directory, exist_ok=True)
+                    zf.extractall(directory)
+            return directory
+        except Exception as e:
+            st.error(f"Failed to extract {zpath}: {e}")
+            
     return directory
 
-
-# PATCH 1 — file discovery handles .pvtu, bare .vtu, and recursive subfolders
 @st.cache_data
-def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA400_3D_diagnostic"):
-    """
-    Loads Elmer VTU/PVTU files from the specified directory.
-    Handles serial (.vtu), parallel (.pvtu), and results in subfolders.
-    """
-    directory = directory.strip()
-    prefix = prefix.strip()
-
+def load_glacier_data(directory: str, prefix: str):
+    """Loads Elmer VTU/PVTU files. Handles serial, parallel, and subfolders."""
     if not os.path.isdir(directory):
         return None
 
-    def discover(exts, recursive=False):
-        files = []
-        for ext in exts:
-            if recursive:
-                files += glob.glob(os.path.join(directory, "**", f"{prefix}*{ext}"), recursive=True)
-            else:
-                files += glob.glob(os.path.join(directory, f"{prefix}*{ext}"))
-        return sorted(set(files))
-
-    # 1) Serial: prefix_t0001.vtu | Parallel: prefix_t0001.pvtu (meshio merges pieces)
-    vtu_files = discover((".vtu", ".pvtu"))
-
-    # 2) Any .vtu/.pvtu directly in the directory
-    if not vtu_files:
-        for ext in (".vtu", ".pvtu"):
-            vtu_files = sorted(glob.glob(os.path.join(directory, f"*{ext}")))
-            if vtu_files:
-                break
-
-    # 3) Recursive search (files often land in a results/ subfolder)
-    if not vtu_files:
-        vtu_files = discover((".vtu", ".pvtu"), recursive=True)
-
+    # Discover files
+    files = []
+    for ext in (".vtu", ".pvtu"):
+        files += glob.glob(os.path.join(directory, "**", f"{prefix}*{ext}"), recursive=True)
+        files += glob.glob(os.path.join(directory, f"{prefix}*{ext}"))
+    
+    vtu_files = sorted(set(files))
     if not vtu_files:
         return None
 
     try:
         mesh0 = meshio.read(vtu_files[0])
     except Exception as e:
-        st.error(f"Failed to read VTU file: {e}")
+        st.error(f"Failed to read base VTU: {e}")
         return None
 
     points = mesh0.points.astype(np.float32)
@@ -103,11 +94,7 @@ def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA400_3D_diagnost
             triangles = cell_block.data.astype(np.int32)
             break
 
-    has_surface = triangles is not None
-
-    fields = {}
-    field_info = {}
-
+    fields, field_info = {}, {}
     for key, arr in mesh0.point_data.items():
         arr = arr.astype(np.float32)
         if arr.ndim == 1:
@@ -125,89 +112,66 @@ def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA400_3D_diagnost
             for key in field_info.keys():
                 if key in mesh.point_data:
                     fields[key][t] = mesh.point_data[key].astype(np.float32)
-        except Exception as e:
-            st.warning(f"Could not load timestep {t}: {e}")
+        except Exception:
+            pass # Skip failed timesteps silently
 
     return {
-        "vtu_files": vtu_files,
-        "n_timesteps": len(vtu_files),
-        "points": points,
-        "triangles": triangles,
-        "has_surface": has_surface,
-        "field_info": field_info,
-        "fields": fields
+        "vtu_files": vtu_files, "n_timesteps": len(vtu_files), "points": points,
+        "triangles": triangles, "has_surface": triangles is not None,
+        "field_info": field_info, "fields": fields
     }
 
-
 # =============================================
-# MAIN APP
+# STREAMLIT APP
 # =============================================
 def main():
-    st.markdown("<h1 style='text-align: center;'>🏔️ Elmer Glacier 3D Diagnostic Viewer</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center;'>Visualize Stokes flow, velocity, pressure, and depth from Elmer FEM output.</p>", unsafe_allow_html=True)
+    st.title("🏔️ Elmer Glacier 3D Diagnostic Viewer")
+    st.caption("✅ Plotly (with Alphahull Fallback) + Matplotlib | Elmer FEM Output")
 
+    # --- Sidebar Configuration ---
     st.sidebar.header("⚙️ Configuration")
-
-    default_dir = "himalayan_glacier3d"
-    data_dir = st.sidebar.text_input("Results Directory", value=default_dir)
     prefix = st.sidebar.text_input("File Prefix", value="Stokes_ELA400_3D_diagnostic")
+    
+    # Manual cache clear button
+    if st.sidebar.button("🔄 Clear Cache & Reload"):
+        load_glacier_data.clear()
+        ensure_data_dir.clear()
+        st.rerun()
 
-    if st.sidebar.button("🔄 Load Data", type="primary"):
-        # PATCH 2 — never reuse a cached failed load (stale None trap)
-        load_elmer_vtu_data.clear()
-        # NEW (B3) — try to materialize the directory from a bundled zip first
-        data_dir = ensure_data_dir(data_dir)
-        st.session_state.data = load_elmer_vtu_data(data_dir, prefix)
-        st.session_state.loaded = True
+    st.sidebar.markdown("---")
+    st.sidebar.header("🎛️ Rendering Controls")
+    z_exag = st.sidebar.slider("Z Exaggeration", 1.0, 100.0, 10.0, 1.0, help="Exaggerate Z to see ice thickness.")
+    max_points = st.sidebar.number_input("Max Points (Decimation)", 10000, 1000000, 150000, 10000)
 
-    if 'loaded' not in st.session_state or not st.session_state.loaded:
-        st.info("👈 Please configure the directory and click **Load Data** in the sidebar.")
-        return
+    # --- Auto-Load Data ---
+    data_dir = ensure_data_dir(DATA_DIR)
+    with st.spinner("Loading glacier mesh data..."):
+        data = load_glacier_data(data_dir, prefix)
 
-    data = st.session_state.data
-
-    # PATCH 3 — debug panel replaces the old "if data is None:" block
     if data is None:
-        st.error(f"No `.vtu`/`.pvtu` files found in `{data_dir}` matching prefix `{prefix}`.")
-        with st.expander("🔍 Debug — why?", expanded=True):
-            st.write(f"Streamlit working directory: `{os.getcwd()}`")
+        st.error(f"No `.vtu`/`.pvtu` files found matching prefix `{prefix}`.")
+        with st.expander("🔍 Debug Info", expanded=True):
+            st.write(f"Looking in: `{data_dir}`")
             if not os.path.isdir(data_dir):
-                st.write(f"❌ `{data_dir}` does **not exist** relative to that directory. "
-                         "On Streamlit Cloud this is expected until you commit or LFS-track the data "
-                         "(or drop a `.zip` next to the app so it can self-extract).")
-            else:
-                entries = sorted(os.listdir(data_dir))
-                st.write(f"✅ Directory exists, {len(entries)} entries:")
-                st.code("\n".join(entries[:60]) if entries else "(empty)")
-                found = [f for f in entries if f.lower().endswith((".vtu", ".pvtu"))]
-                if found:
-                    st.success(f"Elmer output present: {found[:8]} — adjust the File Prefix to match.")
+                st.write("❌ Directory does not exist. Ensure your data is committed to GitHub or drop a `.zip` in the repo root.")
         return
 
-    st.success(f"✅ Loaded {data['n_timesteps']} timestep(s) successfully!")
+    st.success(f"✅ Loaded {data['n_timesteps']} timestep(s) from {len(data['vtu_files'])} files.")
 
-    st.markdown("### 🎛️ Visualization Controls")
-    col1, col2, col3, col4 = st.columns(4)
-
+    # --- Main Controls ---
+    col1, col2, col3 = st.columns(3)
     with col1:
         available_fields = list(data['field_info'].keys())
         default_field = "Velocity" if "Velocity" in available_fields else (available_fields[0] if available_fields else None)
         field = st.selectbox("Select Field", available_fields, index=available_fields.index(default_field) if default_field else 0)
-
     with col2:
         timestep = st.slider("Timestep", 0, data['n_timesteps'] - 1, 0)
-
     with col3:
         colormap = st.selectbox("Colormap", COLORMAPS, index=0)
 
-    with col4:
-        z_exag = st.slider("Z Exaggeration", 1.0, 100.0, 10.0, 1.0, help="Glaciers are thin; exaggerate Z to see thickness.")
-
-    max_points = st.sidebar.number_input("Max Points (Decimation)", min_value=10000, max_value=1000000, value=150000, step=10000)
-    point_size = st.sidebar.slider("Point Size (if cloud)", 1, 15, 3)
-
+    # --- Data Processing ---
     pts = data['points'].copy()
-    pts[:, 2] *= z_exag
+    pts[:, 2] *= z_exag  # Apply Z-exaggeration
 
     kind = data['field_info'][field]
     raw = data['fields'][field][timestep]
@@ -224,79 +188,83 @@ def main():
     plot_pts = pts[valid_mask]
     plot_vals = values[valid_mask]
 
+    # Decimation
     if len(plot_pts) > max_points:
         indices = np.random.choice(len(plot_pts), max_points, replace=False)
         plot_pts = plot_pts[indices]
         plot_vals = plot_vals[indices]
-        st.sidebar.warning(f"⚠️ Decimated to {max_points} points for browser performance.")
 
-    st.markdown(f"### 📈 {label} at Timestep {timestep + 1}")
+    cmin, cmax = float(np.min(plot_vals)), float(np.max(plot_vals))
+    auto_scale = st.checkbox("Auto Color Scale", value=True)
+    if not auto_scale:
+        c1, c2 = st.columns(2)
+        cmin = c1.number_input("Min Limit", value=cmin, format="%.3e")
+        cmax = c2.number_input("Max Limit", value=cmax, format="%.3e")
 
-    cmin = float(np.min(plot_vals))
-    cmax = float(np.max(plot_vals))
-
-    col_a, col_b = st.columns(2)
-    with col_a:
-        auto_scale = st.checkbox("Auto Color Scale", value=True)
-    with col_b:
-        if not auto_scale:
-            cmin = st.number_input("Min Limit", value=cmin, format="%.3e")
-            cmax = st.number_input("Max Limit", value=cmax, format="%.3e")
-        else:
-            cmin, cmax = None, None
-
+    # =============================================
+    # PLOTLY 3D (PRIMARY)
+    # =============================================
+    st.subheader(f"📈 {label} at Timestep {timestep + 1}")
     fig = go.Figure()
 
-    if data['has_surface']:
-        st.info("Rendering surface mesh.")
+    # THE MAGIC FALLBACK: If no explicit triangles, use Plotly's alphahull to generate the surface!
+    if data['has_surface'] and data['triangles'] is not None:
         fig.add_trace(go.Mesh3d(
-            x=pts[:, 0], y=pts[:, 1], z=pts[:, 2],
+            x=plot_pts[:, 0], y=plot_pts[:, 1], z=plot_pts[:, 2],
             i=data['triangles'][:, 0], j=data['triangles'][:, 1], k=data['triangles'][:, 2],
-            intensity=values,
-            colorscale=colormap,
-            intensitymode='vertex',
-            cmin=cmin, cmax=cmax,
-            opacity=0.9,
+            intensity=plot_vals, colorscale=colormap, intensitymode='vertex',
+            cmin=cmin, cmax=cmax, opacity=0.9,
             lighting=dict(ambient=0.8, diffuse=0.8, specular=0.5, roughness=0.5),
-            hovertemplate=f'<b>{label}:</b> %{{intensity:.3e}}<br><b>X:</b> %{{x:.2f}}<br><b>Y:</b> %{{y:.2f}}<br><b>Z:</b> %{{z:.2f}}<extra></extra>'
+            hovertemplate=f'<b>{label}:</b> %{{intensity:.3e}}<br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<br>Z: %{{z:.2f}}<extra></extra>'
         ))
     else:
-        st.info("Rendering as 3D Point Cloud (Volume tetrahedra detected).")
-        fig.add_trace(go.Scatter3d(
+        # Browser safety check: alphahull crashes if > ~50,000 points
+        if len(plot_pts) > 50000:
+            st.warning("⚠️ Auto-decimating to 50k points for Alphahull surface generation to prevent browser crash.")
+            idx = np.random.choice(len(plot_pts), 50000, replace=False)
+            plot_pts = plot_pts[idx]
+            plot_vals = plot_vals[idx]
+
+        fig.add_trace(go.Mesh3d(
             x=plot_pts[:, 0], y=plot_pts[:, 1], z=plot_pts[:, 2],
-            mode='markers',
-            marker=dict(
-                size=point_size,
-                color=plot_vals,
-                colorscale=colormap,
-                cmin=cmin, cmax=cmax,
-                opacity=0.85,
-                line=dict(width=0)
-            ),
-            hovertemplate=f'<b>{label}:</b> %{{marker.color:.3e}}<br><b>X:</b> %{{x:.2f}}<br><b>Y:</b> %{{y:.2f}}<br><b>Z:</b> %{{z:.2f}}<extra></extra>'
+            alphahull=5, # Generates surface mathematically!
+            intensity=plot_vals, colorscale=colormap, intensitymode='vertex',
+            cmin=cmin, cmax=cmax, opacity=0.9,
+            lighting=dict(ambient=0.8, diffuse=0.8, specular=0.5, roughness=0.5),
+            hovertemplate=f'<b>{label}:</b> %{{intensity:.3e}}<br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<br>Z: %{{z:.2f}}<extra></extra>'
         ))
 
     fig.update_layout(
-        height=700,
-        margin=dict(l=0, r=0, t=40, b=0),
+        height=700, margin=dict(l=0, r=0, t=40, b=0),
         scene=dict(
-            aspectmode="data",
+            aspectmode="data", 
             camera=dict(eye=dict(x=1.5, y=1.5, z=0.6)),
-            xaxis=dict(title="X (m)"),
-            yaxis=dict(title="Y (m)"),
-            zaxis=dict(title="Z (m, exaggerated)")
+            xaxis=dict(title="X (m)"), yaxis=dict(title="Y (m)"), zaxis=dict(title="Z (m, exaggerated)")
         )
     )
-
     st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("### 📊 Field Statistics")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Min", f"{np.min(plot_vals):.3e}")
-    col2.metric("Max", f"{np.max(plot_vals):.3e}")
-    col3.metric("Mean", f"{np.mean(plot_vals):.3e}")
-    col4.metric("Std Dev", f"{np.std(plot_vals):.3e}")
+    # =============================================
+    # MATPLOTLIB FALLBACK / EXPORT VIEW
+    # =============================================
+    with st.expander("🖼️ 2D Top-Down Projection (Matplotlib)"):
+        fig2, ax = plt.subplots(figsize=(8, 6))
+        sc = ax.scatter(plot_pts[:, 0], plot_pts[:, 1], c=plot_vals, s=2, cmap=colormap.lower())
+        ax.set_xlabel("X (m)")
+        ax.set_ylabel("Y (m)")
+        ax.set_title(f"{label} (Top-Down)")
+        plt.colorbar(sc, ax=ax, label=label)
+        st.pyplot(fig2)
 
+    # =============================================
+    # STATISTICS
+    # =============================================
+    with st.expander("📊 Field Statistics"):
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Min", f"{np.min(plot_vals):.3e}")
+        c2.metric("Max", f"{np.max(plot_vals):.3e}")
+        c3.metric("Mean", f"{np.mean(plot_vals):.3e}")
+        c4.metric("Std Dev", f"{np.std(plot_vals):.3e}")
 
 if __name__ == "__main__":
     main()
