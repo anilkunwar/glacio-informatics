@@ -3,6 +3,7 @@ import os
 import glob
 import zipfile
 import gc
+import sys
 import numpy as np
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
@@ -34,13 +35,18 @@ COLORMAPS = ['Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis',
 # MEMORY UTILITIES
 # =============================================
 def get_rss_mb():
-    """Current resident memory (MB). psutil if installed, else /proc
-    (Linux / Streamlit Cloud), else getrusage peak as last resort."""
+    """Current resident memory (MB).
+
+    Priority: psutil (if installed) -> /proc/self/status (Linux / Streamlit
+    Cloud) -> resource.getrusage peak as last resort. Correctly handles the
+    kB-vs-bytes difference of ru_maxrss between Linux and macOS.
+    """
     try:
         import psutil
         return psutil.Process().memory_info().rss / 1e6
     except Exception:
         pass
+
     try:
         with open("/proc/self/status") as f:
             for line in f:
@@ -48,18 +54,22 @@ def get_rss_mb():
                     return float(line.split()[1]) / 1e3   # kB -> MB
     except Exception:
         pass
+
     try:
         import resource
-        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e3
+        val = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # Linux: kB ; macOS: bytes
+        return val / 1e3 if sys.platform != "darwin" else val / 1e6
     except Exception:
         return None
 
 # =============================================
-# DATA EXTRACTION & LOADING
+# DATA EXTRACTION
 # =============================================
-@st.cache_data
+@st.cache_data(max_entries=2, show_spinner=False)
 def ensure_data_dir(directory: str) -> str:
-    """Self-extract <directory>.zip on first load if the folder is missing."""
+    """Self-extract <directory>.zip on first load if the folder is missing
+    OR present but empty. Returns the resolved directory path."""
     if os.path.isdir(directory) and os.listdir(directory):
         return directory
 
@@ -81,36 +91,48 @@ def ensure_data_dir(directory: str) -> str:
                     os.makedirs(directory, exist_ok=True)
                     zf.extractall(directory)
             return directory
-        except Exception as e:
-            st.error(f"Failed to extract {zpath}: {e}")
+        except Exception:
+            # Pure function: swallow here, caller inspects the return value
+            # by re-checking the directory contents.
+            continue
     return directory
 
-
-@st.cache_resource(show_spinner=False)
+# =============================================
+# SKELETON LOADER (cached, bounded, PURE)
+# =============================================
+@st.cache_resource(max_entries=5, show_spinner=False)
 def load_skeleton(directory: str, prefix: str):
     """Tiny, permanent structure: file list + geometry + field catalogue.
-    Reads ONLY the first file. No time-series data is kept in RAM."""
+
+    Reads ONLY the first file. Returns either a skeleton dict or an error dict
+    ``{"__error__": msg}``. Emits no Streamlit UI so it can live safely inside
+    cache_resource without cache-poisoning or stale-UI side effects.
+    """
     if not os.path.isdir(directory):
-        return None
+        return {"__error__": f"Directory does not exist: {directory}"}
 
     pvtu = sorted(set(glob.glob(os.path.join(directory, "**", f"{prefix}*.pvtu"),
                                 recursive=True)))
     files = pvtu if pvtu else sorted(set(
         glob.glob(os.path.join(directory, "**", f"{prefix}*.vtu"), recursive=True)))
     if not files:
-        return None
+        return {"__error__": f"No .vtu/.pvtu files match prefix '{prefix}' "
+                             f"under {directory}"}
 
     try:
         m0 = meshio.read(files[0])
     except Exception as e:
-        st.error(f"Failed to read {os.path.basename(files[0])}: {e}")
-        return None
+        return {"__error__": f"Failed to read {os.path.basename(files[0])}: {e}"}
 
     points = np.asarray(m0.points, dtype=np.float32)
+    points.setflags(write=False)   # shared across sessions — read-only
+
     triangles = None
     for block in m0.cells:
         if block.type == "triangle":
-            triangles = np.asarray(block.data, dtype=np.int32)
+            tri = np.asarray(block.data, dtype=np.int32)
+            tri.setflags(write=False)
+            triangles = tri
             break
 
     field_info = {}
@@ -125,34 +147,37 @@ def load_skeleton(directory: str, prefix: str):
             kind = "tensor"
         field_info[key] = {"comps": comps, "kind": kind}
 
-    del m0  # free the meshio object (cells, float64 arrays, ...)
+    del m0   # free meshio object (cells, float64 arrays, ...)
 
     n_pts = len(points)
     total_comps = sum(v["comps"] for v in field_info.values())
     return {
         "files": files,
         "n_timesteps": len(files),
-        "points": points,             # read-only, shared — never mutate
-        "triangles": triangles,       # read-only, shared
+        "points": points,
+        "triangles": triangles,
         "field_info": field_info,
         "n_pts": n_pts,
         "total_comps": total_comps,
         "ts_bytes": n_pts * max(total_comps, 1) * 4,
     }
 
-
+# =============================================
+# PER-TIMESTEP LOADERS (PURE, TWO LRU POLICIES)
+# =============================================
 def _read_timestep(path: str, n_pts: int):
-    """Read ONE timestep file; return its point-data fields as float32.
-    Arrays are shared from the cache — do NOT mutate them."""
+    """Pure worker: returns {field: ndarray} or {"__error__": msg}.
+    Arrays are float32, shared from the cache — do NOT mutate in the caller."""
     try:
         mesh = meshio.read(path)
     except Exception as e:
-        st.warning(f"Failed to read {os.path.basename(path)}: {e}")
-        return {}
+        return {"__error__": f"Failed to read {os.path.basename(path)}: {e}"}
+
     if mesh.points.shape[0] != n_pts:
-        st.warning(f"{os.path.basename(path)}: {mesh.points.shape[0]} points "
-                   f"(expected {n_pts}); skipping.")
-        return {}
+        return {"__error__": (
+            f"{os.path.basename(path)}: {mesh.points.shape[0]} points "
+            f"(expected {n_pts}); file skipped.")}
+
     out = {}
     for key, arr in mesh.point_data.items():
         a = np.asarray(arr, dtype=np.float32)
@@ -161,17 +186,30 @@ def _read_timestep(path: str, n_pts: int):
         out[key] = a
     return out
 
-# Two LRU policies: normal (≤6 timesteps, 30 min) vs low-memory (≤2, 5 min)
-load_ts        = st.cache_resource(max_entries=6, ttl=1800, show_spinner=False)(_read_timestep)
-load_ts_lowmem = st.cache_resource(max_entries=2, ttl=300,  show_spinner=False)(_read_timestep)
+
+# Two DISTINCT function identities -> two distinct Streamlit caches.
+# This is more robust than wrapping the same function twice.
+@st.cache_resource(max_entries=6, ttl=1800, show_spinner=False)
+def load_ts_normal(path: str, n_pts: int):
+    return _read_timestep(path, n_pts)
 
 
+@st.cache_resource(max_entries=2, ttl=300, show_spinner=False)
+def load_ts_lowmem(path: str, n_pts: int):
+    return _read_timestep(path, n_pts)
+
+# =============================================
+# TRIANGLE-AWARE DECIMATION
+# =============================================
 def decimate_triangles(points, values, triangles, max_tris):
-    """Random triangle subsampling with vertex remapping — keeps a VALID mesh
-    and shrinks both RAM and the Plotly JSON payload."""
+    """Random triangle subsampling with vertex remapping.
+
+    Keeps a VALID mesh and shrinks both RAM and the Plotly JSON payload.
+    RNG is seeded so the view is stable across reruns.
+    """
     if len(triangles) <= max_tris:
         return points, values, triangles
-    rng = np.random.default_rng(0)                     # stable across reruns
+    rng = np.random.default_rng(0)
     keep = rng.choice(len(triangles), size=max_tris, replace=False)
     tris = triangles[keep]
     used = np.unique(tris.ravel())
@@ -186,11 +224,11 @@ def main():
     st.title("🏔️ Elmer Glacier 3D Diagnostic Viewer")
     st.caption("🧠 Memory-budgeted (< 1 GB): lazy timesteps + LRU cache + mesh decimation")
 
-    # ---------- Sidebar ----------
+    # ---------- Sidebar: configuration ----------
     st.sidebar.header("⚙️ Configuration")
     prefix = st.sidebar.text_input("File Prefix", value="Stokes_ELA400_3D_diagnostic")
 
-    # ---------- Memory panel ----------
+    # ---------- Sidebar: memory panel ----------
     st.sidebar.markdown("---")
     st.sidebar.subheader(f"🧠 Memory (budget {MEM_BUDGET_MB:.0f} MB)")
     mem_slot  = st.sidebar.empty()   # filled after data load
@@ -202,29 +240,33 @@ def main():
 
     if st.sidebar.button("🗑️ Free memory now"):
         load_skeleton.clear()
-        load_ts.clear()
+        load_ts_normal.clear()
         load_ts_lowmem.clear()
         st.cache_data.clear()
         gc.collect()
         st.rerun()
 
+    # ---------- Sidebar: rendering controls ----------
     st.sidebar.markdown("---")
     st.sidebar.header("🎛️ Rendering Controls")
     z_exag = st.sidebar.slider("Z Exaggeration", 1.0, 100.0, 10.0, 1.0,
                                help="Exaggerate Z to see ice thickness.")
-    default_pts = 60_000 if low_mem else 150_000
-    max_points = st.sidebar.number_input("Max Points (decimation)",
-                                         5_000, 500_000, default_pts, 5_000)
-    if low_mem and max_points > 80_000:
-        max_points = 80_000
-        st.sidebar.caption("Capped at 80k in Low-Memory Mode.")
 
-    # ---------- Load skeleton (cheap, permanent) ----------
+    # Clamp at the widget level (max_value) instead of silently reassigning
+    # after the fact — this way the number shown to the user is the truth.
+    upper = 80_000 if low_mem else 500_000
+    default_pts = min(60_000 if low_mem else 150_000, upper)
+    max_points = st.sidebar.number_input(
+        "Max Points (decimation)", 5_000, upper, default_pts, 5_000,
+        help="Cap applied via triangle- or point-subsampling. "
+             f"Upper bound is {upper:,} in {'Low-Memory' if low_mem else 'Normal'} Mode.")
+
+    # ---------- Load skeleton (cheap, permanent, bounded) ----------
     data_dir = ensure_data_dir(DATA_DIR)
     with st.spinner("Scanning mesh files..."):
         skel = load_skeleton(data_dir, prefix)
 
-    # Live RAM meter (refreshes on every rerun)
+    # ---------- Live RAM meter (refreshes every rerun) ----------
     mem = get_rss_mb()
     if mem is not None:
         mem_slot.metric("Server RAM in use", f"{mem:.0f} / {MEM_BUDGET_MB:.0f} MB")
@@ -233,33 +275,41 @@ def main():
             st.sidebar.error("Over budget — press 'Free memory' and keep "
                              "Low-Memory Mode on.")
 
-    if skel is None:
-        st.error(f"No `.vtu`/`.pvtu` files found matching prefix `{prefix}`.")
+    # ---------- Handle skeleton errors (single source of truth) ----------
+    if skel is None or "__error__" in skel:
+        msg = skel["__error__"] if skel and "__error__" in skel else "Unknown error."
+        st.error(msg)
         with st.expander("🔍 Debug Info", expanded=True):
             st.write(f"Looking in: `{data_dir}`")
             if not os.path.isdir(data_dir):
                 st.write("❌ Directory does not exist. Ensure your data is committed "
                          "to GitHub or drop a `.zip` in the repo root.")
+            else:
+                st.write(f"Directory exists. Searching for prefix `{prefix}`.")
         return
 
     n_ts = skel["n_timesteps"]
     st.success(f"✅ Found {n_ts} timestep(s); mesh has {skel['n_pts']:,} nodes, "
                f"{len(skel['field_info'])} fields.")
+
     with st.expander("📁 Files & memory plan"):
         st.write([os.path.basename(f) for f in skel["files"]])
         keep = 2 if low_mem else 6
         skel_mb = (skel["points"].nbytes +
                    (skel["triangles"].nbytes if skel["triangles"] is not None else 0)) / 1e6
-        st.caption(f"Per-timestep cache ≈ {skel['ts_bytes']/1e6:.1f} MB × ≤{keep} entries "
-                   f"(≈ {skel['ts_bytes']*keep/1e6:.0f} MB max) "
-                   f"+ skeleton ≈ {skel_mb:.1f} MB.")
+        st.caption(
+            f"Upper bound per timestep ≈ {skel['ts_bytes']/1e6:.1f} MB "
+            f"× ≤{keep} cached entries (≈ {skel['ts_bytes']*keep/1e6:.0f} MB max) "
+            f"+ skeleton ≈ {skel_mb:.1f} MB. Actual RSS is usually lower "
+            f"because most fields are small."
+        )
 
     available_fields = list(skel["field_info"].keys())
     if not available_fields:
         st.error("No point-data fields found in the VTU/PVTU file(s).")
         return
 
-    # ---------- Controls ----------
+    # ---------- Main controls ----------
     col1, col2, col3 = st.columns(3)
     with col1:
         default_field = "Velocity" if "Velocity" in available_fields else available_fields[0]
@@ -275,9 +325,13 @@ def main():
         colormap = st.selectbox("Colormap", COLORMAPS, index=0)
 
     # ---------- LAZY: load ONLY the selected timestep ----------
-    loader = load_ts_lowmem if low_mem else load_ts
+    loader = load_ts_lowmem if low_mem else load_ts_normal
     with st.spinner(f"Reading timestep {timestep + 1}..."):
         ts_fields = loader(skel["files"][timestep], skel["n_pts"])
+
+    if ts_fields is None or "__error__" in ts_fields:
+        st.error(ts_fields["__error__"] if ts_fields else "Timestep load failed.")
+        return
 
     if field not in ts_fields:
         st.error(f"Field `{field}` is missing in "
@@ -285,13 +339,13 @@ def main():
         return
 
     # ---------- Geometry (copy ONLY if exaggerating) ----------
-    pts = skel["points"]
+    pts = skel["points"]                       # read-only shared array
     if z_exag != 1.0:
         pts = pts.copy()
         pts[:, 2] *= z_exag
 
     kind = skel["field_info"][field]["kind"]
-    raw = ts_fields[field]                       # shared cache array — read-only
+    raw = ts_fields[field]                     # shared cache array — read-only
     if kind == "scalar":
         values, label = raw, field
     else:
@@ -304,7 +358,7 @@ def main():
         st.warning("No valid (non-NaN) values to plot for this field/timestep.")
         return
 
-    # ---------- Triangle path: NaN-filter + BUDGETED decimation ----------
+    # ---------- Triangle path: NaN-filter + budgeted decimation ----------
     triangles = None
     if skel["triangles"] is not None:
         tris = skel["triangles"]
@@ -321,8 +375,8 @@ def main():
             st.caption(f"Mesh decimated to {len(triangles):,} triangles / "
                        f"{len(plot_pts):,} vertices to fit the memory budget.")
     else:
-        # Alphahull path — decimate points
-        cap = min(int(max_points), 50_000)      # browser-safety cap
+        # Alphahull path — decimate points. Hard cap for browser safety.
+        cap = min(int(max_points), 50_000)
         if len(plot_pts) > cap:
             rng = np.random.default_rng(0)
             idx = rng.choice(len(plot_pts), cap, replace=False)
@@ -367,12 +421,12 @@ def main():
                    xaxis=dict(title="X (m)"), yaxis=dict(title="Y (m)"),
                    zaxis=dict(title="Z (m, exaggerated)")))
     st.plotly_chart(fig, use_container_width=True)
-    del fig                       # release arrays + JSON before the next section
+    del fig
     if low_mem:
         gc.collect()
 
     # =============================================
-    # MATPLOTLIB (opt-in — an expander still renders on every rerun)
+    # MATPLOTLIB (opt-in — expanders still run every rerun)
     # =============================================
     with st.expander("🖼️ 2D Top-Down Projection (Matplotlib)"):
         if st.checkbox("Render 2D projection", value=not low_mem,
@@ -380,21 +434,22 @@ def main():
             fig2, ax = plt.subplots(figsize=(8, 6))
             sc = ax.scatter(plot_pts[:, 0], plot_pts[:, 1], c=plot_vals,
                             s=2, cmap=colormap.lower())
-            ax.set_xlabel("X (m)"); ax.set_ylabel("Y (m)")
+            ax.set_xlabel("X (m)")
+            ax.set_ylabel("Y (m)")
             ax.set_title(f"{label} (Top-Down)")
             plt.colorbar(sc, ax=ax, label=label)
             st.pyplot(fig2)
             plt.close(fig2)
-            del fig2, ax
+            del fig2, ax, sc
 
     # =============================================
     # STATISTICS (computed on the decimated set — cheap)
     # =============================================
     with st.expander("📊 Field Statistics"):
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Min",  f"{np.min(plot_vals):.3e}")
-        c2.metric("Max",  f"{np.max(plot_vals):.3e}")
-        c3.metric("Mean", f"{np.mean(plot_vals):.3e}")
+        c1.metric("Min",     f"{np.min(plot_vals):.3e}")
+        c2.metric("Max",     f"{np.max(plot_vals):.3e}")
+        c3.metric("Mean",    f"{np.mean(plot_vals):.3e}")
         c4.metric("Std Dev", f"{np.std(plot_vals):.3e}")
 
 if __name__ == "__main__":
