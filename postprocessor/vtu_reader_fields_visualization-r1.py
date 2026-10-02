@@ -35,7 +35,7 @@ COLORMAPS = ['Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Blues', 'Reds'
 @st.cache_data
 def ensure_data_dir(directory: str) -> str:
     """Self-extract <directory>.zip on first load if the folder is missing."""
-    if os.path.isdir(directory):
+    if os.path.isdir(directory) and os.listdir(directory):
         return directory
 
     base = os.path.basename(directory)
@@ -44,7 +44,7 @@ def ensure_data_dir(directory: str) -> str:
         os.path.join(SCRIPT_DIR, f"{base}.zip"),
         os.path.join(SCRIPT_DIR, "data", f"{base}.zip")
     ]
-    
+
     for zpath in zip_paths:
         if not os.path.isfile(zpath):
             continue
@@ -60,7 +60,7 @@ def ensure_data_dir(directory: str) -> str:
             return directory
         except Exception as e:
             st.error(f"Failed to extract {zpath}: {e}")
-            
+
     return directory
 
 @st.cache_data
@@ -69,13 +69,17 @@ def load_glacier_data(directory: str, prefix: str):
     if not os.path.isdir(directory):
         return None
 
-    # Discover files
-    files = []
-    for ext in (".vtu", ".pvtu"):
-        files += glob.glob(os.path.join(directory, "**", f"{prefix}*{ext}"), recursive=True)
-        files += glob.glob(os.path.join(directory, f"{prefix}*{ext}"))
-    
-    vtu_files = sorted(set(files))
+    # Discover files. Prefer .pvtu (parallel master) if present, else .vtu.
+    pvtu_files = sorted(set(
+        glob.glob(os.path.join(directory, "**", f"{prefix}*.pvtu"), recursive=True)
+    ))
+    if pvtu_files:
+        vtu_files = pvtu_files
+    else:
+        vtu_files = sorted(set(
+            glob.glob(os.path.join(directory, "**", f"{prefix}*.vtu"), recursive=True)
+        ))
+
     if not vtu_files:
         return None
 
@@ -101,19 +105,34 @@ def load_glacier_data(directory: str, prefix: str):
             field_info[key] = "scalar"
             fields[key] = np.full((len(vtu_files), n_pts), np.nan, dtype=np.float32)
             fields[key][0] = arr
-        else:
+        elif arr.ndim == 2:
             field_info[key] = "vector"
             fields[key] = np.full((len(vtu_files), n_pts, arr.shape[1]), np.nan, dtype=np.float32)
             fields[key][0] = arr
+        else:
+            # Tensor or higher-rank: flatten trailing dims
+            flat = arr.reshape(arr.shape[0], -1)
+            field_info[key] = f"tensor{arr.shape[1:]}"
+            fields[key] = np.full((len(vtu_files), n_pts, flat.shape[1]), np.nan, dtype=np.float32)
+            fields[key][0] = flat
 
     for t in range(1, len(vtu_files)):
         try:
             mesh = meshio.read(vtu_files[t])
+            if mesh.points.shape[0] != n_pts:
+                st.warning(
+                    f"Timestep {t} has {mesh.points.shape[0]} points "
+                    f"(expected {n_pts}); skipping."
+                )
+                continue
             for key in field_info.keys():
                 if key in mesh.point_data:
-                    fields[key][t] = mesh.point_data[key].astype(np.float32)
-        except Exception:
-            pass # Skip failed timesteps silently
+                    arr = mesh.point_data[key].astype(np.float32)
+                    if arr.ndim > 2:
+                        arr = arr.reshape(arr.shape[0], -1)
+                    fields[key][t] = arr
+        except Exception as e:
+            st.warning(f"Failed to read timestep {t} ({os.path.basename(vtu_files[t])}): {e}")
 
     return {
         "vtu_files": vtu_files, "n_timesteps": len(vtu_files), "points": points,
@@ -131,7 +150,7 @@ def main():
     # --- Sidebar Configuration ---
     st.sidebar.header("⚙️ Configuration")
     prefix = st.sidebar.text_input("File Prefix", value="Stokes_ELA400_3D_diagnostic")
-    
+
     # Manual cache clear button
     if st.sidebar.button("🔄 Clear Cache & Reload"):
         load_glacier_data.clear()
@@ -140,7 +159,8 @@ def main():
 
     st.sidebar.markdown("---")
     st.sidebar.header("🎛️ Rendering Controls")
-    z_exag = st.sidebar.slider("Z Exaggeration", 1.0, 100.0, 10.0, 1.0, help="Exaggerate Z to see ice thickness.")
+    z_exag = st.sidebar.slider("Z Exaggeration", 1.0, 100.0, 10.0, 1.0,
+                               help="Exaggerate Z to see ice thickness.")
     max_points = st.sidebar.number_input("Max Points (Decimation)", 10000, 1000000, 150000, 10000)
 
     # --- Auto-Load Data ---
@@ -153,19 +173,36 @@ def main():
         with st.expander("🔍 Debug Info", expanded=True):
             st.write(f"Looking in: `{data_dir}`")
             if not os.path.isdir(data_dir):
-                st.write("❌ Directory does not exist. Ensure your data is committed to GitHub or drop a `.zip` in the repo root.")
+                st.write("❌ Directory does not exist. Ensure your data is committed "
+                         "to GitHub or drop a `.zip` in the repo root.")
         return
 
     st.success(f"✅ Loaded {data['n_timesteps']} timestep(s) from {len(data['vtu_files'])} files.")
 
+    # Debug: list files that were loaded
+    with st.expander("📁 Files loaded"):
+        st.write([os.path.basename(f) for f in data["vtu_files"]])
+
+    # --- Guard: no fields at all ---
+    available_fields = list(data['field_info'].keys())
+    if not available_fields:
+        st.error("No point-data fields found in the VTU/PVTU file(s).")
+        return
+
     # --- Main Controls ---
     col1, col2, col3 = st.columns(3)
     with col1:
-        available_fields = list(data['field_info'].keys())
-        default_field = "Velocity" if "Velocity" in available_fields else (available_fields[0] if available_fields else None)
-        field = st.selectbox("Select Field", available_fields, index=available_fields.index(default_field) if default_field else 0)
+        default_field = "Velocity" if "Velocity" in available_fields else available_fields[0]
+        field = st.selectbox(
+            "Select Field", available_fields,
+            index=available_fields.index(default_field)
+        )
     with col2:
-        timestep = st.slider("Timestep", 0, data['n_timesteps'] - 1, 0)
+        if data['n_timesteps'] > 1:
+            timestep = st.slider("Timestep", 0, data['n_timesteps'] - 1, 0)
+        else:
+            timestep = 0
+            st.info("Only 1 timestep found — slider disabled.")
     with col3:
         colormap = st.selectbox("Colormap", COLORMAPS, index=0)
 
@@ -176,23 +213,50 @@ def main():
     kind = data['field_info'][field]
     raw = data['fields'][field][timestep]
 
+    # Compute validity BEFORE substituting NaNs so we can mask correctly.
     if kind == "scalar":
-        values = np.where(np.isnan(raw), 0, raw)
+        values = raw
         label = field
+        valid_mask = ~np.isnan(values)
     else:
         magnitude = np.linalg.norm(raw, axis=1)
-        values = np.where(np.isnan(magnitude), 0, magnitude)
+        values = magnitude
         label = f"{field} (Magnitude)"
+        valid_mask = ~np.isnan(values)
 
-    valid_mask = ~np.isnan(values)
     plot_pts = pts[valid_mask]
     plot_vals = values[valid_mask]
 
-    # Decimation
-    if len(plot_pts) > max_points:
-        indices = np.random.choice(len(plot_pts), max_points, replace=False)
-        plot_pts = plot_pts[indices]
-        plot_vals = plot_vals[indices]
+    # --- Triangle handling and decimation ---
+    # If we have explicit triangles, we must remap them to the masked point list
+    # and must NOT blindly decimate points (that would invalidate triangle indices).
+    triangles = None
+    if data['has_surface'] and data['triangles'] is not None:
+        raw_tris = data['triangles']
+        # Drop triangles that reference any invalid (NaN) vertex
+        tri_keep = valid_mask[raw_tris].all(axis=1)
+        raw_tris = raw_tris[tri_keep]
+        # Remap original indices -> masked indices
+        remap = np.full(len(valid_mask), -1, dtype=np.int64)
+        remap[valid_mask] = np.arange(int(valid_mask.sum()))
+        triangles = remap[raw_tris]
+
+        if len(plot_pts) > max_points:
+            st.info(
+                f"Decimation disabled because explicit triangles are present "
+                f"({len(plot_pts):,} points). Plotting full mesh."
+            )
+    else:
+        # No triangles — safe to decimate freely (alphahull will be used).
+        if len(plot_pts) > max_points:
+            rng = np.random.default_rng(0)
+            idx = rng.choice(len(plot_pts), max_points, replace=False)
+            plot_pts = plot_pts[idx]
+            plot_vals = plot_vals[idx]
+
+    if len(plot_vals) == 0:
+        st.warning("No valid (non-NaN) values to plot for this field/timestep.")
+        return
 
     cmin, cmax = float(np.min(plot_vals)), float(np.max(plot_vals))
     auto_scale = st.checkbox("Auto Color Scale", value=True)
@@ -207,39 +271,50 @@ def main():
     st.subheader(f"📈 {label} at Timestep {timestep + 1}")
     fig = go.Figure()
 
-    # THE MAGIC FALLBACK: If no explicit triangles, use Plotly's alphahull to generate the surface!
-    if data['has_surface'] and data['triangles'] is not None:
+    if triangles is not None:
         fig.add_trace(go.Mesh3d(
             x=plot_pts[:, 0], y=plot_pts[:, 1], z=plot_pts[:, 2],
-            i=data['triangles'][:, 0], j=data['triangles'][:, 1], k=data['triangles'][:, 2],
+            i=triangles[:, 0], j=triangles[:, 1], k=triangles[:, 2],
             intensity=plot_vals, colorscale=colormap, intensitymode='vertex',
             cmin=cmin, cmax=cmax, opacity=0.9,
             lighting=dict(ambient=0.8, diffuse=0.8, specular=0.5, roughness=0.5),
-            hovertemplate=f'<b>{label}:</b> %{{intensity:.3e}}<br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<br>Z: %{{z:.2f}}<extra></extra>'
+            hovertemplate=(
+                f'<b>{label}:</b> %{{intensity:.3e}}<br>'
+                'X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>'
+            )
         ))
     else:
-        # Browser safety check: alphahull crashes if > ~50,000 points
+        # Alphahull fallback. Browser-safe cap.
         if len(plot_pts) > 50000:
-            st.warning("⚠️ Auto-decimating to 50k points for Alphahull surface generation to prevent browser crash.")
-            idx = np.random.choice(len(plot_pts), 50000, replace=False)
+            st.warning("⚠️ Auto-decimating to 50k points for Alphahull surface "
+                       "generation to prevent browser crash.")
+            rng = np.random.default_rng(0)
+            idx = rng.choice(len(plot_pts), 50000, replace=False)
             plot_pts = plot_pts[idx]
             plot_vals = plot_vals[idx]
+            # Recompute color limits for the decimated set
+            cmin, cmax = float(np.min(plot_vals)), float(np.max(plot_vals))
 
         fig.add_trace(go.Mesh3d(
             x=plot_pts[:, 0], y=plot_pts[:, 1], z=plot_pts[:, 2],
-            alphahull=5, # Generates surface mathematically!
+            alphahull=5,  # Generates surface mathematically!
             intensity=plot_vals, colorscale=colormap, intensitymode='vertex',
             cmin=cmin, cmax=cmax, opacity=0.9,
             lighting=dict(ambient=0.8, diffuse=0.8, specular=0.5, roughness=0.5),
-            hovertemplate=f'<b>{label}:</b> %{{intensity:.3e}}<br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<br>Z: %{{z:.2f}}<extra></extra>'
+            hovertemplate=(
+                f'<b>{label}:</b> %{{intensity:.3e}}<br>'
+                'X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>'
+            )
         ))
 
     fig.update_layout(
         height=700, margin=dict(l=0, r=0, t=40, b=0),
         scene=dict(
-            aspectmode="data", 
+            aspectmode="data",
             camera=dict(eye=dict(x=1.5, y=1.5, z=0.6)),
-            xaxis=dict(title="X (m)"), yaxis=dict(title="Y (m)"), zaxis=dict(title="Z (m, exaggerated)")
+            xaxis=dict(title="X (m)"),
+            yaxis=dict(title="Y (m)"),
+            zaxis=dict(title="Z (m, exaggerated)")
         )
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -249,12 +324,14 @@ def main():
     # =============================================
     with st.expander("🖼️ 2D Top-Down Projection (Matplotlib)"):
         fig2, ax = plt.subplots(figsize=(8, 6))
-        sc = ax.scatter(plot_pts[:, 0], plot_pts[:, 1], c=plot_vals, s=2, cmap=colormap.lower())
+        sc = ax.scatter(plot_pts[:, 0], plot_pts[:, 1], c=plot_vals,
+                        s=2, cmap=colormap.lower())
         ax.set_xlabel("X (m)")
         ax.set_ylabel("Y (m)")
         ax.set_title(f"{label} (Top-Down)")
         plt.colorbar(sc, ax=ax, label=label)
         st.pyplot(fig2)
+        plt.close(fig2)  # prevent memory leak across reruns
 
     # =============================================
     # STATISTICS
