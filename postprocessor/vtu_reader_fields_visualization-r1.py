@@ -69,7 +69,7 @@ def get_rss_mb():
 @st.cache_data(max_entries=2, show_spinner=False)
 def ensure_data_dir(directory: str) -> str:
     """Self-extract <directory>.zip on first load if the folder is missing
-    OR present but empty. Returns the resolved directory path."""
+    OR present but empty. Returns the resolved directory path. Pure — no UI."""
     if os.path.isdir(directory) and os.listdir(directory):
         return directory
 
@@ -92,8 +92,6 @@ def ensure_data_dir(directory: str) -> str:
                     zf.extractall(directory)
             return directory
         except Exception:
-            # Pure function: swallow here, caller inspects the return value
-            # by re-checking the directory contents.
             continue
     return directory
 
@@ -135,17 +133,17 @@ def load_skeleton(directory: str, prefix: str):
             triangles = tri
             break
 
+    # Classify only numeric fields; skip strings/objects outright.
     field_info = {}
     for key, arr in m0.point_data.items():
         a = np.asarray(arr)
+        if not np.issubdtype(a.dtype, np.number):
+            continue                                  # skip string/object fields
         comps = 1 if a.ndim == 1 else int(np.prod(a.shape[1:]))
-        if comps == 1:
-            kind = "scalar"
-        elif a.ndim == 2 and comps <= 3:
-            kind = "vector"
-        else:
-            kind = "tensor"
-        field_info[key] = {"comps": comps, "kind": kind}
+        field_info[key] = {
+            "comps": comps,
+            "kind": "scalar" if comps == 1 else ("vector" if comps <= 3 else "tensor"),
+        }
 
     del m0   # free meshio object (cells, float64 arrays, ...)
 
@@ -167,7 +165,11 @@ def load_skeleton(directory: str, prefix: str):
 # =============================================
 def _read_timestep(path: str, n_pts: int):
     """Pure worker: returns {field: ndarray} or {"__error__": msg}.
-    Arrays are float32, shared from the cache — do NOT mutate in the caller."""
+
+    Arrays are float32, shared from the cache — do NOT mutate in the caller.
+    Note: scalar fields may arrive as (n,) OR (n, 1); the downstream
+    ``compute_field_values`` helper normalizes both.
+    """
     try:
         mesh = meshio.read(path)
     except Exception as e:
@@ -180,15 +182,17 @@ def _read_timestep(path: str, n_pts: int):
 
     out = {}
     for key, arr in mesh.point_data.items():
-        a = np.asarray(arr, dtype=np.float32)
+        a = np.asarray(arr)
+        if not np.issubdtype(a.dtype, np.number):
+            continue                                  # skip non-numeric fields
+        a = a.astype(np.float32, copy=False)
         if a.ndim > 2:
-            a = a.reshape(a.shape[0], -1)   # tensors -> flattened
+            a = a.reshape(a.shape[0], -1)             # tensors -> (n, comps)
         out[key] = a
     return out
 
 
 # Two DISTINCT function identities -> two distinct Streamlit caches.
-# This is more robust than wrapping the same function twice.
 @st.cache_resource(max_entries=6, ttl=1800, show_spinner=False)
 def load_ts_normal(path: str, n_pts: int):
     return _read_timestep(path, n_pts)
@@ -197,6 +201,48 @@ def load_ts_normal(path: str, n_pts: int):
 @st.cache_resource(max_entries=2, ttl=300, show_spinner=False)
 def load_ts_lowmem(path: str, n_pts: int):
     return _read_timestep(path, n_pts)
+
+# =============================================
+# FIELD NORMALIZATION (shape-safe)
+# =============================================
+def compute_field_values(raw, field_name, n_pts):
+    """Normalize any point-data array to (values_1D, label, valid_mask).
+
+    Robust against:
+      * scalars stored as (n,) OR (n, 1)   <- the source of the IndexError
+      * vectors / tensors (n, k)           -> magnitude
+      * integer fields (np.isnan -> TypeError)
+      * +/-inf (np.isnan misses them)
+      * arrays whose length != reference mesh (explicit error, not a crash)
+    """
+    a = np.asarray(raw)
+    if a.ndim == 0:
+        raise ValueError(f"Field '{field_name}' is a single constant — cannot plot.")
+    if not np.issubdtype(a.dtype, np.number):
+        raise ValueError(f"Field '{field_name}' is non-numeric ({a.dtype}) — skipped.")
+
+    a2 = a.reshape(a.shape[0], -1)            # (n, comps): ravels (n,1) AND tensors
+
+    if a2.shape[0] != n_pts:
+        raise ValueError(
+            f"Field '{field_name}' has {a2.shape[0]:,} values but the reference "
+            f"mesh has {n_pts:,} nodes. The timestep files don't all share the "
+            f"same mesh (mesh adaptation? a bare mesh file matching the prefix?). "
+            f"Press '🗑️ Free memory now' and check the file list."
+        )
+
+    if a2.shape[1] == 1:
+        values, label = a2[:, 0], field_name
+    else:
+        values = np.linalg.norm(a2, axis=1)
+        label = f"{field_name} (Magnitude, {a2.shape[1]} comps)"
+
+    try:
+        valid_mask = np.isfinite(values)          # catches NaN AND +/-inf
+    except TypeError:                              # integer dtypes etc.
+        valid_mask = np.ones(values.shape, dtype=bool)
+
+    return values, label, valid_mask
 
 # =============================================
 # TRIANGLE-AWARE DECIMATION
@@ -231,7 +277,7 @@ def main():
     # ---------- Sidebar: memory panel ----------
     st.sidebar.markdown("---")
     st.sidebar.subheader(f"🧠 Memory (budget {MEM_BUDGET_MB:.0f} MB)")
-    mem_slot  = st.sidebar.empty()   # filled after data load
+    mem_slot  = st.sidebar.empty()
     prog_slot = st.sidebar.empty()
 
     low_mem = st.sidebar.checkbox(
@@ -252,8 +298,6 @@ def main():
     z_exag = st.sidebar.slider("Z Exaggeration", 1.0, 100.0, 10.0, 1.0,
                                help="Exaggerate Z to see ice thickness.")
 
-    # Clamp at the widget level (max_value) instead of silently reassigning
-    # after the fact — this way the number shown to the user is the truth.
     upper = 80_000 if low_mem else 500_000
     default_pts = min(60_000 if low_mem else 150_000, upper)
     max_points = st.sidebar.number_input(
@@ -266,7 +310,7 @@ def main():
     with st.spinner("Scanning mesh files..."):
         skel = load_skeleton(data_dir, prefix)
 
-    # ---------- Live RAM meter (refreshes every rerun) ----------
+    # ---------- Live RAM meter ----------
     mem = get_rss_mb()
     if mem is not None:
         mem_slot.metric("Server RAM in use", f"{mem:.0f} / {MEM_BUDGET_MB:.0f} MB")
@@ -275,7 +319,7 @@ def main():
             st.sidebar.error("Over budget — press 'Free memory' and keep "
                              "Low-Memory Mode on.")
 
-    # ---------- Handle skeleton errors (single source of truth) ----------
+    # ---------- Handle skeleton errors ----------
     if skel is None or "__error__" in skel:
         msg = skel["__error__"] if skel and "__error__" in skel else "Unknown error."
         st.error(msg)
@@ -338,24 +382,32 @@ def main():
                  f"`{os.path.basename(skel['files'][timestep])}`.")
         return
 
+    # ---------- Debug expander (shape inspection) ----------
+    with st.expander("🐛 Field array shapes (debug)", expanded=False):
+        st.write({k: {"shape": tuple(np.asarray(v).shape),
+                      "dtype": str(np.asarray(v).dtype)}
+                  for k, v in ts_fields.items()})
+        st.write({"mesh points": tuple(skel["points"].shape),
+                  "n_pts": skel["n_pts"]})
+
     # ---------- Geometry (copy ONLY if exaggerating) ----------
     pts = skel["points"]                       # read-only shared array
     if z_exag != 1.0:
         pts = pts.copy()
         pts[:, 2] *= z_exag
 
-    kind = skel["field_info"][field]["kind"]
-    raw = ts_fields[field]                     # shared cache array — read-only
-    if kind == "scalar":
-        values, label = raw, field
-    else:
-        values, label = np.linalg.norm(raw, axis=1), f"{field} (Magnitude)"
+    # ---------- Normalize the chosen field to a 1-D (values, mask) ----------
+    raw = ts_fields[field]
+    try:
+        values, label, valid_mask = compute_field_values(raw, field, skel["n_pts"])
+    except ValueError as e:
+        st.error(str(e))
+        return
 
-    valid_mask = ~np.isnan(values)
-    plot_pts = pts[valid_mask]
+    plot_pts = pts[valid_mask]                 # mask is guaranteed 1-D, length n_pts
     plot_vals = values[valid_mask]
     if len(plot_pts) == 0:
-        st.warning("No valid (non-NaN) values to plot for this field/timestep.")
+        st.warning("No finite values to plot for this field/timestep.")
         return
 
     # ---------- Triangle path: NaN-filter + budgeted decimation ----------
@@ -426,7 +478,7 @@ def main():
         gc.collect()
 
     # =============================================
-    # MATPLOTLIB (opt-in — expanders still run every rerun)
+    # MATPLOTLIB (opt-in)
     # =============================================
     with st.expander("🖼️ 2D Top-Down Projection (Matplotlib)"):
         if st.checkbox("Render 2D projection", value=not low_mem,
