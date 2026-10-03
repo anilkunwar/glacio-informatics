@@ -22,7 +22,7 @@ st.set_page_config(
 # PATH CONFIGURATION
 # =============================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DATA_DIR = os.path.join(SCRIPT_DIR, "himalayan_glacier3d")
+DEFAULT_DATA_DIR = os.path.join(SCRIPT_DIR, "deformed_geometry")
 COLORMAPS = ['Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Blues', 'Reds', 'Greens', 'Jet', 'Rainbow']
 
 # =============================================
