@@ -13,8 +13,8 @@ Simulation
   Simulation Type = "Steady"
   Steady State Max Iterations = 1
   Output Intervals = 1
-  Output File = "Stokes_ELA400_3D_diagnostic.result"
-  Post File = "Stokes_ELA400_3D_diagnostic.vtu"
+  Output File = "Stokes_ELA5000_3D_diagnostic.result"
+  Post File = "Stokes_ELA5000_3D_diagnostic.vtu"
   Initialize Dirichlet Conditions = Logical False
 End
 
