@@ -23,29 +23,59 @@ st.set_page_config(
 # =============================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DATA_DIR = os.path.join(SCRIPT_DIR, "himalayan_glacier3d")
-
 COLORMAPS = ['Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Blues', 'Reds', 'Greens', 'Jet', 'Rainbow']
+
+# =============================================
+# MESH PROCESSING
+# =============================================
+def extract_surface_triangles(mesh):
+    """Extracts outer surface triangles from volume meshes (hex/tet) for Plotly."""
+    for cell_block in mesh.cells:
+        ctype = cell_block.type
+        data = cell_block.data
+        
+        if ctype == "triangle":
+            return data.astype(np.int32)
+            
+        if ctype == "tetra" and data.shape[1] == 4:
+            face_defs = [(0,1,2), (0,1,3), (1,2,3), (0,2,3)]
+            face_dict = {}
+            for tet in data:
+                for f in face_defs:
+                    ordered = tuple(tet[list(f)])
+                    sorted_f = tuple(sorted(ordered))
+                    if sorted_f in face_dict: face_dict[sorted_f]['count'] += 1
+                    else: face_dict[sorted_f] = {'count': 1, 'ordered': ordered}
+            return np.array([v['ordered'] for v in face_dict.values() if v['count'] == 1], dtype=np.int32)
+            
+        if ctype == "hexahedron" and data.shape[1] == 8:
+            face_defs = [(0,1,2,3), (4,5,6,7), (0,1,5,4), (1,2,6,5), (2,3,7,6), (3,0,4,7)]
+            face_dict = {}
+            for hx in data:
+                for f in face_defs:
+                    ordered = tuple(hx[list(f)])
+                    sorted_f = tuple(sorted(ordered))
+                    if sorted_f in face_dict: face_dict[sorted_f]['count'] += 1
+                    else: face_dict[sorted_f] = {'count': 1, 'ordered': ordered}
+            tris = []
+            for v in face_dict.values():
+                if v['count'] == 1:
+                    f = v['ordered']
+                    tris.append((f[0], f[1], f[2]))
+                    tris.append((f[0], f[2], f[3]))
+            return np.array(tris, dtype=np.int32)
+    return None
 
 # =============================================
 # LOAD DATA
 # =============================================
 @st.cache_data
 def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA5000_3D_diagnostic_t0001"):
-    """Loads Elmer VTU/PVTU files from the specified directory."""
     if not os.path.isdir(directory):
         return None
 
-    # FIX #1: recursive discovery, .pvtu takes priority over .vtu pieces.
-    # Rationale (from diagnostic note):
-    #   - .pvtu masters live in subfolders (e.g. results/) for parallel runs.
-    #   - A stray serial .vtu used to shadow several .pvtu files.
-    #   - Parallel piece files (prefix_t0001_0.vtu, _1.vtu, ...) used to be
-    #     globbed as separate "timesteps".
     pvtu_files = sorted(glob.glob(os.path.join(directory, "**", f"{prefix}*.pvtu"), recursive=True))
-    if pvtu_files:
-        vtu_files = pvtu_files
-    else:
-        vtu_files = sorted(glob.glob(os.path.join(directory, "**", f"{prefix}*.vtu"), recursive=True))
+    vtu_files = pvtu_files if pvtu_files else sorted(glob.glob(os.path.join(directory, "**", f"{prefix}*.vtu"), recursive=True))
 
     if not vtu_files:
         return None
@@ -59,12 +89,8 @@ def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA5000_3D_diagnos
     points = mesh0.points.astype(np.float32)
     n_pts = len(points)
 
-    # Extract surface triangles if they exist
-    triangles = None
-    for cell_block in mesh0.cells:
-        if cell_block.type == "triangle":
-            triangles = cell_block.data.astype(np.int32)
-            break
+    # NEW: Extract surface triangles (supports hexahedra, tetrahedra, and triangles)
+    triangles = extract_surface_triangles(mesh0)
 
     fields = {}
     field_info = {}
@@ -80,7 +106,6 @@ def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA5000_3D_diagnos
             fields[key] = np.full((len(vtu_files), n_pts, arr.shape[1]), np.nan, dtype=np.float32)
             fields[key][0] = arr
 
-    # Load remaining timesteps with a progress bar
     progress_text = "Loading timesteps..."
     my_bar = st.progress(0, text=progress_text)
 
@@ -110,10 +135,9 @@ def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA5000_3D_diagnos
 # =============================================
 def main():
     st.title("🏔️ Elmer Glacier 3D Diagnostic Viewer")
-    st.caption("✅ Plotly Mesh3d with alphahull fallback | Powered by meshio")
+    st.caption("✅ Hexahedron/Tetra Surface Extraction | Powered by meshio & Plotly")
 
     st.sidebar.header("⚙️ Configuration")
-
     data_dir = st.sidebar.text_input("Results Directory", value=DEFAULT_DATA_DIR)
     prefix = st.sidebar.text_input("File Prefix", value="Stokes_ELA5000_3D_diagnostic_t0001")
 
@@ -122,17 +146,13 @@ def main():
 
     if data is None:
         st.error(f"No `.vtu`/`.pvtu` files found in `{data_dir}` matching prefix `{prefix}`.")
-        st.info("Ensure the data folder exists in your repository and is tracked by Git (or Git LFS).")
         return
 
     st.success(f"✅ Loaded {data['n_timesteps']} timestep(s) successfully!")
 
-    # FIX #4: show exactly what got matched, so silent glob failures are visible.
     with st.expander("📁 Files loaded"):
         st.write([os.path.basename(f) for f in data['vtu_files']])
 
-    # FIX #3: bail out cleanly if the file has no point_data.
-    # st.selectbox([]) raises on some Streamlit versions and is useless anyway.
     available_fields = list(data['field_info'].keys())
     if not available_fields:
         st.error("The loaded file contains no point-data fields. Nothing to visualize.")
@@ -142,14 +162,8 @@ def main():
     st.sidebar.header("🎛️ Visualization Controls")
 
     default_field = "Velocity" if "Velocity" in available_fields else available_fields[0]
-    field = st.sidebar.selectbox(
-        "Select Field",
-        available_fields,
-        index=available_fields.index(default_field),
-    )
+    field = st.sidebar.selectbox("Select Field", available_fields, index=available_fields.index(default_field))
 
-    # FIX #2: st.slider(min=0, max=0) raises StreamlitInvalidMinMaxError.
-    # n_timesteps == 1 is the *expected* case for a diagnostic solve.
     if data['n_timesteps'] > 1:
         timestep = st.sidebar.slider("Timestep", 0, data['n_timesteps'] - 1, 0)
     else:
@@ -157,12 +171,8 @@ def main():
         st.sidebar.info("Only 1 timestep found — slider disabled.")
 
     colormap = st.sidebar.selectbox("Colormap", COLORMAPS, index=0)
-    z_exag = st.sidebar.slider("Z Exaggeration", 1.0, 50.0, 10.0, 1.0,
-                               help="Glaciers are thin; exaggerate Z to see thickness.")
-
-    max_points = st.sidebar.number_input("Max Points (Decimation)",
-                                         min_value=10000, max_value=1000000,
-                                         value=150000, step=10000)
+    z_exag = st.sidebar.slider("Z Exaggeration", 1.0, 50.0, 10.0, 1.0, help="Glaciers are thin; exaggerate Z.")
+    max_points = st.sidebar.number_input("Max Points (Decimation)", min_value=10000, max_value=1000000, value=150000, step=10000)
 
     pts = data['points'].copy()
     pts[:, 2] *= z_exag
@@ -182,16 +192,15 @@ def main():
     plot_pts = pts[valid_mask]
     plot_vals = values[valid_mask]
 
+    # Decimation logic
     if len(plot_pts) > max_points and data['triangles'] is None:
         indices = np.random.choice(len(plot_pts), max_points, replace=False)
         render_pts = plot_pts[indices]
         render_vals = plot_vals[indices]
-        st.sidebar.warning(f"⚠️ Decimated to {max_points} points for browser performance.")
-    elif data['triangles'] is not None and len(pts) > max_points:
-        st.sidebar.info("ℹ️ Explicit mesh detected. Decimation disabled to preserve surface topology.")
-        render_pts = pts
-        render_vals = values
+        st.sidebar.warning(f"⚠️ Decimated to {max_points} points.")
     else:
+        if data['triangles'] is not None and len(pts) > max_points:
+            st.sidebar.info("ℹ️ Explicit mesh detected. Decimation disabled to preserve topology.")
         render_pts = pts
         render_vals = values
 
@@ -213,7 +222,7 @@ def main():
     fig = go.Figure()
 
     if data['triangles'] is not None:
-        st.info("Rendering explicit surface mesh.")
+        st.info("✅ Rendering explicit surface mesh (Hexahedra/Tetra/Triangles).")
         fig.add_trace(go.Mesh3d(
             x=render_pts[:, 0], y=render_pts[:, 1], z=render_pts[:, 2],
             i=data['triangles'][:, 0], j=data['triangles'][:, 1], k=data['triangles'][:, 2],
@@ -226,7 +235,7 @@ def main():
             hovertemplate=f'<b>{label}:</b> %{{intensity:.3e}}<br><b>X:</b> %{{x:.2f}}<br><b>Y:</b> %{{y:.2f}}<br><b>Z:</b> %{{z:.2f}}<extra></extra>'
         ))
     else:
-        st.info("No explicit surface triangles found. Rendering surface using Plotly alphahull.")
+        st.info("️ No explicit surface found. Rendering surface using Plotly alphahull.")
         fig.add_trace(go.Mesh3d(
             x=render_pts[:, 0], y=render_pts[:, 1], z=render_pts[:, 2],
             alphahull=5,
@@ -253,7 +262,7 @@ def main():
 
     st.plotly_chart(fig, use_container_width=True)
 
-    with st.expander("📊 Field Statistics"):
+    with st.expander(" Field Statistics"):
         clean = render_vals[~np.isnan(render_vals)]
         if len(clean) > 0:
             st.write({
