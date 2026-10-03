@@ -30,7 +30,7 @@ COLORMAPS = ['Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Blues', 'Reds'
 # LOAD DATA
 # =============================================
 @st.cache_data
-def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA400_3D_diagnostic"):
+def load_elmer_vtu_data(directory: str, prefix: str = "Stokes_ELA5000_3D_diagnostic_t0001"):
     """Loads Elmer VTU/PVTU files from the specified directory."""
     if not os.path.isdir(directory):
         return None
