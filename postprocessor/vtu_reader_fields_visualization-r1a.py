@@ -278,18 +278,28 @@ with tab2:
     pts = points.copy()
     pts[:, 2] *= z_exag
     
-    raw = fields[field][timestep]
-    kind = "scalar" if raw.shape[-1] == 1 else "vector"
+    raw = np.asarray(fields[field][timestep])
     
-    if kind == "scalar":
-        values = np.where(np.isnan(raw), 0, raw.flatten())
+    # ROBUST FIX: Flatten FIRST to prevent NumPy broadcasting into 2D matrices
+    if len(raw.shape) == 1 or raw.shape[-1] == 1:
+        kind = "scalar"
+        flat_raw = raw.flatten()
+        values = np.where(np.isnan(flat_raw), 0.0, flat_raw)
         label = field
     else:
-        magnitude = np.linalg.norm(raw, axis=1)
-        values = np.where(np.isnan(magnitude), 0, magnitude)
+        kind = "vector"
+        magnitude = np.linalg.norm(raw, axis=-1)
+        values = np.where(np.isnan(magnitude), 0.0, magnitude)
         label = f"{field} (Magnitude)"
         
     valid_mask = ~np.isnan(values)
+    
+    # SAFETY CHECK: Ensure valid_mask is strictly 1D and matches pts length
+    valid_mask = np.asarray(valid_mask).flatten()
+    if len(valid_mask) != len(pts):
+        st.error(f"⚠️ Shape mismatch: points={len(pts)}, mask={len(valid_mask)}. This usually means the NPZ file has corrupted or mismatched field data.")
+        st.stop()
+        
     plot_pts = pts[valid_mask]
     plot_vals = values[valid_mask]
     
