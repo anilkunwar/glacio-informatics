@@ -115,7 +115,7 @@ def main():
     st.sidebar.header("⚙️ Configuration")
 
     data_dir = st.sidebar.text_input("Results Directory", value=DEFAULT_DATA_DIR)
-    prefix = st.sidebar.text_input("File Prefix", value="Stokes_ELA400_3D_diagnostic")
+    prefix = st.sidebar.text_input("File Prefix", value="Stokes_ELA500_3D_diagnostic_t0001")
 
     with st.spinner("Loading simulation data..."):
         data = load_elmer_vtu_data(data_dir, prefix)
