@@ -171,7 +171,7 @@ def main():
         st.sidebar.info("Only 1 timestep found — slider disabled.")
 
     colormap = st.sidebar.selectbox("Colormap", COLORMAPS, index=0)
-    z_exag = st.sidebar.slider("Z Exaggeration", 1.0, 50.0, 10.0, 1.0, help="Glaciers are thin; exaggerate Z.")
+    z_exag = st.sidebar.slider("Z Exaggeration", 1.0, 50.0, 1.0, 1.0, help="Glaciers are thin; exaggerate Z.")
     max_points = st.sidebar.number_input("Max Points (Decimation)", min_value=10000, max_value=1000000, value=150000, step=10000)
 
     pts = data['points'].copy()
