@@ -10,3 +10,5 @@
 
 [![continuummodelnt2d](https://img.shields.io/badge/postprocessor2-streamlit-green)](https://vtu-reader-fields-visualization2.streamlit.app/) (Hexahedron support integrated in the Plotly's Mesh3D function)
 
+[![continuummodelnt2d](https://img.shields.io/badge/postprocessor2a-streamlit-green)](https://vtu-reader-fields-visualization2a.streamlit.app/) (Hexahedron support integrated in the Plotly's Mesh3D function, vtu only and no npz conversion with all the features of 1b)
+
