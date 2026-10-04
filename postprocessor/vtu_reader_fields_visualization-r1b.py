@@ -16,17 +16,25 @@ warnings.filterwarnings('ignore')
 # PAGE CONFIG
 # =============================================
 st.set_page_config(
-    page_title="Elmer Glacier NPZ Toolkit",
+    page_title="Elmer VTU/NPZ Toolkit",
     page_icon="🏔️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # =============================================
+# PATH CONFIGURATION (FIXED)
+# =============================================
+# This ensures the path is always resolved relative to the script's location, 
+# preventing "Directory does not exist" errors in Streamlit Cloud or different terminals.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DATA_DIR = os.path.join(SCRIPT_DIR, "himalayan_glacier3d")
+
+# =============================================
 # HEXAHEDRON / TETRAHEDRON SURFACE EXTRACTION
 # =============================================
 def extract_surface_triangles(mesh):
-    """Extracts outer surface triangles from volume meshes for Plotly."""
+    """Extracts outer surface triangles from volume meshes (hex/tet) for Plotly."""
     for cell_block in mesh.cells:
         ctype = cell_block.type
         data = cell_block.data
@@ -147,11 +155,10 @@ with tab1:
     file_paths = []
     
     if source_choice == "Default Directory":
-        default_dir = "himalayan_glacier3d"
-        st.info(f"Looking for `.vtu` / `.pvtu` files in: `./{default_dir}`")
-        if os.path.isdir(default_dir):
-            pvtu_files = sorted(glob.glob(os.path.join(default_dir, "**", "*.pvtu"), recursive=True))
-            vtu_files = sorted(glob.glob(os.path.join(default_dir, "**", "*.vtu"), recursive=True))
+        st.info(f"Looking for `.vtu` / `.pvtu` files in: `{DEFAULT_DATA_DIR}`")
+        if os.path.isdir(DEFAULT_DATA_DIR):
+            pvtu_files = sorted(glob.glob(os.path.join(DEFAULT_DATA_DIR, "**", "*.pvtu"), recursive=True))
+            vtu_files = sorted(glob.glob(os.path.join(DEFAULT_DATA_DIR, "**", "*.vtu"), recursive=True))
             file_paths = pvtu_files if pvtu_files else vtu_files
             
             if file_paths:
@@ -159,9 +166,9 @@ with tab1:
                 with st.expander("Preview Files"):
                     st.write([os.path.basename(f) for f in file_paths[:10]] + (["..."] if len(file_paths) > 10 else []))
             else:
-                st.warning(f"⚠️ No `.vtu` or `.pvtu` files found in `./{default_dir}`. Please use the Upload option.")
+                st.warning(f"⚠️ No `.vtu` or `.pvtu` files found in `{DEFAULT_DATA_DIR}`. Please use the Upload option.")
         else:
-            st.warning(f"⚠️ Directory `./{default_dir}` does not exist. Please use the Upload option.")
+            st.warning(f"⚠️ Directory `{DEFAULT_DATA_DIR}` does not exist. Please ensure the folder is in the same directory as this script, or use the Upload option.")
 
     else:
         uploaded_files = st.file_uploader(
@@ -263,7 +270,7 @@ with tab2:
     st.sidebar.markdown("---")
     st.sidebar.header("🎨 Figure Customization")
     
-    # Opacity Control (NEW)
+    # Opacity Control
     opacity = st.sidebar.slider("Mesh Opacity", 0.1, 1.0, 0.9, 0.05, help="Adjust the transparency of the 3D mesh.")
     
     # Font & Label Sizes
@@ -338,7 +345,7 @@ with tab2:
     else:
         cmin, cmax = None, None
 
-    # Get formatted label with units
+    # Get formatted label with units (e.g., m/yr or MPa)
     label = get_field_label(field)
 
     # --- Plotly Figure Construction ---
