@@ -3,7 +3,7 @@ A cuboid of size 1000 x 2000 x 5 m^3
 
 ## Surface-bedrock dataset
 
-The distance and elevation profile of glacier and bedrock, matching those of Langtang Himal
+The distance and elevation profile of glacier and bedrock, matching those of Langtang Himal. The surface to bedrock distance exceeds 50.0 m (e.g. 1 measurement provided Z_surface - Z_bedrock = 319.0 m), and so there might be inconsitency in original measurement.  
 
 
 ## Mesh-deformer
