@@ -1,1 +1,5 @@
+'all:"activation energy" AND all:ice',
+    'all:"activation energy" AND all:glacier',
 
+
+13 results
