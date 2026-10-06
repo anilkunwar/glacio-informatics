@@ -2,6 +2,9 @@
 
 [![continuummodelnt2d](https://img.shields.io/badge/nexplore1-streamlit-yellow)](https://n-knowledge-explorer1.streamlit.app/) (csv contains the full text)
 
+[![continuummodelnt2d](https://img.shields.io/badge/nexplore2-streamlit-yellow)](https://n-knowledge-explorer2.streamlit.app/) (robust query, csv contains the full text)
+
+
 
 # CSV to JSON FILE CONVERSION
 
