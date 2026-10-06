@@ -220,27 +220,27 @@ def get_csv_files_from_folder(folder_path: str) -> List[Path]:
 #
 def find_metadatabase_folder() -> str:
     """
-    Auto-detect the initial_dislocation_density_metadatabase folder by checking common paths.
+    Auto-detect the n_metadatabase folder by checking common paths.
     Uses os.path.join for all path operations.
 
     Returns:
-        String path to the first valid initial_dislocation_density_metadatabase folder found, or default fallback
+        String path to the first valid n_metadatabase folder found, or default fallback
     """
     # Get the directory where this script is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
     # Define candidate paths using os.path.join
     candidates = [
-        os.path.join(script_dir, "initial_dislocation_density_metadatabase"),
-        os.path.join(script_dir, "database", "initial_dislocation_density_metadatabase"),
-        os.path.join(script_dir, "data", "initial_dislocation_density_metadatabase"),
-        os.path.join(script_dir, "initial_dislocation_density_metadatabase", "csv"),
-        os.path.join(os.getcwd(), "initial_dislocation_density_metadatabase"),
-        os.path.join(os.getcwd(), "database", "initial_dislocation_density_metadatabase"),
-        os.path.join(os.getcwd(), "data", "initial_dislocation_density_metadatabase"),
-        "initial_dislocation_density_metadatabase",  # relative to cwd
-        os.path.join("database", "initial_dislocation_density_metadatabase"),  # relative to cwd
-        os.path.join("data", "initial_dislocation_density_metadatabase"),  # relative to cwd
+        os.path.join(script_dir, "n_metadatabase"),
+        os.path.join(script_dir, "database", "n_metadatabase"),
+        os.path.join(script_dir, "data", "n_metadatabase"),
+        os.path.join(script_dir, "n_metadatabase", "csv"),
+        os.path.join(os.getcwd(), "n_metadatabase"),
+        os.path.join(os.getcwd(), "database", "n_metadatabase"),
+        os.path.join(os.getcwd(), "data", "n_metadatabase"),
+        "n_metadatabase",  # relative to cwd
+        os.path.join("database", "n_metadatabase"),  # relative to cwd
+        os.path.join("data", "n_metadatabase"),  # relative to cwd
     ]
 
     for path in candidates:
