@@ -1,0 +1,4 @@
+("Glen flow law" OR "ice rheology" OR "flow law exponent" OR "non-newtonian ice") '
+    'AND (glacier OR "ice sheet" OR "ice stream")
+
+42 results
