@@ -11,6 +11,8 @@
 # ✅ topic column: 'glen_exponent_ice' (this campaign),
 #    'rate_factor_ice', 'enhancement_factor_ice' (siblings)
 # ✅ query_arxiv(topic=…) is an explicit cache-keyed argument
+# ✅ Optimal query: abs:("Glen flow law" OR …) AND abs:(glacier OR …)
+# ✅ Categories restricted to physics.geo-ph / physics.comp-ph / physics.flu-dyn
 # ✅ Optional combined-view export (topic=None, all three extractors live)
 # ✅ Full text stored in SQLite universe DB is single source of truth
 # ✅ Coverage warnings; backfill; BLOB-score repair retained
@@ -90,6 +92,33 @@ CURRENT_TOPIC = "glen_exponent_ice"
 
 # Known sibling campaigns (for the combined-view toggle)
 SIBLING_TOPICS = ("rate_factor_ice", "enhancement_factor_ice")
+
+
+# ========================= OPTIMAL QUERY FOR GLEN EXPONENT =========================
+# The query below is the "best balance" formulation:
+#   - RHS of the AND forces the paper into glaciology proper, without which
+#     the left-hand "flow law exponent" / "creep exponent" / "ice rheology"
+#     strings pull in materials science papers about freezing water,
+#     metallurgical creep, and polymer ice analogues.
+#   - Categories are the second firewall: physics.geo-ph is the primary home
+#     of glaciology on arXiv; physics.comp-ph hosts Elmer/Ice, ISSM, PISM,
+#     and STREAMICE numerical model papers; physics.flu-dyn catches the
+#     Stokes-flow / non-Newtonian-fluid solver community.
+# Glen-exponent papers are niche — 50–100 results is plenty for one pass.
+GLEN_QUERY = (
+    'abs:("Glen flow law" OR "ice rheology" OR "flow law exponent" OR "creep exponent") '
+    'AND abs:(glacier OR "ice sheet" OR "ice stream" OR "ice shelf")'
+)
+
+GLEN_CATEGORIES = [
+    'physics.geo-ph',   # Geophysics (primary home for glaciology)
+    'physics.comp-ph',  # Computational Physics (home for Elmer/ISSM papers)
+    'physics.flu-dyn',  # Fluid Dynamics (Stokes flow solvers)
+]
+
+GLEN_START_YEAR = 1990   # numerical ice-sheet modelling took off in the 90s
+GLEN_END_YEAR   = 2024
+GLEN_MAX_RESULTS = 50    # niche topic; 50–100 is a good ceiling
 
 
 # ========================= PAGE CONFIGURATION (MUST BE FIRST) =========================
@@ -1435,36 +1464,27 @@ show_logs("top")
 with st.sidebar:
     st.header("🔍 Search Configuration")
 
-    # Glen-n × glacier query.
-    # Precision warning specific to this topic: "flow law" is used across many
-    # branches of physics, and "exponent" is everywhere. The right-hand side of
-    # the query below constrains the paper to be glaciological, which is where
-    # the Glen exponent lives. Tighter variants to swap in if the first pass is
-    # muddy:
-    #   - abs:"Glen flow law" AND (abs:n=3 OR abs:"exponent of 3")
-    #   - ti:"Glen" AND ti:"flow law"
-    #   - all:"Glen exponent" AND cat:physics.geo-ph
-    # Lean on the relevance threshold + Matched Terms column to filter the rest.
-    default_query = (
-        '(abs:"Glen flow law" OR abs:"Glen exponent" OR abs:"flow law exponent" '
-        'OR abs:"creep exponent" OR abs:"power law exponent" '
-        'OR abs:"ice rheology" OR abs:"constitutive relation" '
-        'OR abs:"strain rate exponent" OR abs:"stress exponent") '
-        'AND (abs:glacier OR abs:"ice sheet" OR abs:"ice stream" '
-        'OR abs:"ice shelf" OR abs:"polar ice" OR abs:"ice dynamics" '
-        'OR abs:"ice flow" OR abs:glaciology OR abs:"land ice")'
-    )
+    # Optimal Glen-exponent query. The RHS of the AND forces the paper into
+    # glaciology proper — without it, "flow law exponent" / "creep exponent"
+    # / "ice rheology" pull in metallurgical creep, polymer analogues, and
+    # materials-science papers about freezing water. The category filter is
+    # the second firewall (see GLEN_CATEGORIES above).
+    default_query = GLEN_QUERY
     query = st.text_area("Search Query", value=default_query, height=160)
 
-    default_cats = ["physics.geo-ph", "physics.flu-dyn"]
+    default_cats = GLEN_CATEGORIES
     categories = st.multiselect("Categories", default_cats, default=default_cats)
 
     current_year = datetime.now().year
     col1, col2 = st.columns(2)
-    with col1: start_year = st.number_input("Start Year", 1970, current_year, 1990)
-    with col2: end_year = st.number_input("End Year", start_year, current_year, current_year)
+    with col1:
+        start_year = st.number_input("Start Year", 1970, current_year,
+                                     GLEN_START_YEAR)
+    with col2:
+        end_year = st.number_input("End Year", start_year, current_year,
+                                   min(GLEN_END_YEAR, current_year))
 
-    max_results = st.slider("Maximum Results", 1, 500, 50)
+    max_results = st.slider("Maximum Results", 1, 500, GLEN_MAX_RESULTS)
     relevance_threshold = st.slider("Relevance Threshold (%)", 0, 100, 30)
 
     st.subheader("💾 Storage Options")
@@ -2051,26 +2071,29 @@ atexit.register(cleanup)
 
 
 # -------------------------- END OF FILE --------------------------
-# Glen-n harvester — arXiv query targets the Glen flow-law exponent in
-# glacier / ice-sheet rheology. Each row is labelled topic='glen_exponent_ice';
-# sibling campaigns ('rate_factor_ice', 'enhancement_factor_ice') sit in the
-# same shared DB and can be exported separately or merged via the
-# combined-view toggle.
+# Glen-n harvester — arXiv query uses the "best balance" formulation:
+#   abs:("Glen flow law" OR "ice rheology" OR "flow law exponent" OR "creep exponent")
+#   AND abs:(glacier OR "ice sheet" OR "ice stream" OR "ice shelf")
+# restricted to physics.geo-ph / physics.comp-ph / physics.flu-dyn, which is
+# the firewall that keeps materials-science freezing-water papers out of the
+# harvest. Each row is labelled topic='glen_exponent_ice'; sibling campaigns
+# ('rate_factor_ice', 'enhancement_factor_ice') sit in the same shared DB and
+# can be exported separately or merged via the combined-view toggle.
 #
-# Honest expectations (from the pivot map):
-#   - Same arXiv caveat as the Cu campaigns: the canonical values of the Glen
-#     exponent (Paterson & Budd, Cuffey & Paterson, the classic lab creep
-#     experiments on polycrystalline ice) live in J. Glaciol., Ann. Glaciol.,
-#     and The Physics of Glaciers — not arXiv. What arXiv DOES have is
-#     modelling papers (Elmer/Ice, PISM, ISSM, Úa, STREAMICE) where n is an
-#     explicit model parameter, often stated right in the methods section,
-#     which the keyword window above is designed to catch.
+# Honest expectations:
+#   - The canonical values of the Glen exponent (Paterson & Budd, Cuffey &
+#     Paterson, the classic lab creep experiments on polycrystalline ice) live
+#     in J. Glaciol., Ann. Glaciol., and The Physics of Glaciers — not arXiv.
+#     What arXiv DOES have is modelling papers (Elmer/Ice, PISM, ISSM, Úa,
+#     STREAMICE) where n is an explicit model parameter, often stated right
+#     in the methods section, which the keyword window above is designed to
+#     catch.
 #   - The three quantities are physically one story:
 #         ε̇ = A(T) · E · τⁿ
-#     with n the Glen exponent, A the Arrhenius rate factor (this campaign's
-#     sibling target), and E an enhancement factor for anisotropic fabric.
-#     All three candidate columns coexist in each export row; the combined-
-#     view toggle lets them reinforce each other in a single NER-ready CSV.
+#     with n the Glen exponent, A the Arrhenius rate factor (sibling target),
+#     and E an enhancement factor for anisotropic fabric. All three candidate
+#     columns coexist in each export row; the combined-view toggle lets them
+#     reinforce each other in a single NER-ready CSV.
 #   - Elmer/Ice SIF files commonly take n as a "Material" constant, so a
 #     direct follow-up is to parse the SIF's `Glen Exponent` keyword and
 #     compare against what modellers actually publish.
