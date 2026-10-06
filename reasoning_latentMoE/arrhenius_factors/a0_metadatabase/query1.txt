@@ -1,1 +1,3 @@
+abs:("rate factor" OR "pre-exponential" OR "arrhenius" OR "ice softness" OR "flow parameter" OR "parameter A" OR "creep law" OR "constitutive parameter" OR "viscosity parameter" OR "flow rate") AND abs:(glacier OR "ice sheet" OR "ice stream" OR "ice shelf" OR "polycrystalline ice" OR "ice creep" OR "ice rheology" OR "polar ice")
 
+31 results
