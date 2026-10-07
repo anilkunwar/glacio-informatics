@@ -1,1 +1,3 @@
+abs:("enhancement factor" OR "flow enhancement" OR "ice softening" OR "inverse method" OR "control method" OR "adjoint" OR "data assimilation" OR "anisotropy" OR "CPO" OR "crystallographic fabric" OR "spatially varying rate factor" OR "rate factor inversion") AND abs:(glacier OR "ice sheet" OR "ice stream" OR "ice flow model" OR "ice rheology" OR "numerical modeling")
 
+24 results
