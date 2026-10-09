@@ -1884,26 +1884,29 @@ def _norm_stress_regime(s: Optional[str]) -> Optional[str]:
         return "low"
     return None
 
-
-def _norm_temp_regime(s: Optional[str]) -> Optional[str]:
-    s = (s or "").lower()
+#
+def _norm_temp_regime(s: Optional[Any]) -> Optional[str]:
+    """Normalise thermal state. Handles both string labels and numeric °C."""
+    if s is None:
+        return None
+    
+    # If a numeric temperature is passed, map it to a regime string
+    if isinstance(s, (int, float)):
+        if float(s) <= -10.0:
+            return "cold"
+        elif float(s) >= -1.0:
+            return "temperate"
+        else:
+            return "polythermal"
+    
+    # Otherwise, parse the string
+    s = str(s).lower()
     if any(k in s for k in ("cold", "polar", "cold-based")):
         return "cold"
     if any(k in s for k in ("temperate", "warm", "melting", "warm-based")):
         return "temperate"
     if "polythermal" in s:
         return "polythermal"
-    return None
-
-
-def _norm_fabric(s: Optional[str]) -> Optional[str]:
-    s = (s or "").lower()
-    if any(k in s for k in ("single-max", "single max", "multi-max",
-                            "multi max", "anisotropic", "lpo", "cpo",
-                            "c-axis", "c axis", "fabric")):
-        return "anisotropic"
-    if any(k in s for k in ("isotropic", "random", "equiaxed")):
-        return "isotropic"
     return None
 
 
