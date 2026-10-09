@@ -1883,7 +1883,26 @@ def _norm_stress_regime(s: Optional[str]) -> Optional[str]:
                             "divide", "dome")):
         return "low"
     return None
-
+  
+#
+def _norm_fabric(s: Optional[Any]) -> Optional[str]:
+    """Normalise fabric / architecture. Handles strings robustly."""
+    if s is None:
+        return None
+    
+    # If it's not a string, convert safely
+    if not isinstance(s, str):
+        s = str(s)
+        
+    s = s.lower()
+    if any(k in s for k in ("single-max", "single max", "multi-max",
+                            "multi max", "anisotropic", "lpo", "cpo",
+                            "c-axis", "c axis", "fabric", "columnar")):
+        return "anisotropic"
+    if any(k in s for k in ("isotropic", "random", "equiaxed")):
+        return "isotropic"
+    return None
+  
 #
 def _norm_temp_regime(s: Optional[Any]) -> Optional[str]:
     """Normalise thermal state. Handles both string labels and numeric °C."""
