@@ -1,5 +1,5 @@
 # ============================================================================
-# ███ GLACIER INTELLIGENT ElmerSolver RECOMMENDER (v10.1.1-glacier)       ███
+# ███ GLACIER INTELLIGENT ElmerSolver RECOMMENDER (v10.1.1-glacier-full)  ███
 # ███ 1:1 architectural port of the nt-Cu Latent-MoE AI v10.1.1 codebase  ███
 # ███ 3 substitutions only:                                              ███
 # ███   1. Ontology:      ρ₀/μ/γ̇₀/m/σ₀  →  n/A₁/A₂/Q₁/Q₂/T*/E/γ̇_c/ρ/g   ███
@@ -10,17 +10,25 @@
 # ███   · _norm_provenance total function (order of hints LOAD-BEARING) ███
 # ███   · INCUMBENT_ROUTES pin-list  +  _is_context union cascade       ███
 # ███   · 10-expert Latent MoE (Material/Thermal/Strain/Method/…)        ███
-# ███   · Framework(A)/Genesis(B)/Thermo-Mech(C)/Corpus-Density threads ███
-# ███   · PhysicsRegimeExpert  ∧  TheoryRegimeExpert gating             ███
+# ███   · Regime(A)/Arrhenius(B)/Fabric(C)/Corpus-Density threads       ███
+# ███   · GlenNRegimeExpert ∧ RateFactorRegimeExpert ∧ ... gating       ███
 # ███   · Exact-XAI stacked bar chart (no SHAP/LIME approximation)      ███
 # ███   · Publication visuals dashboard (radar/bar/Sankey/Treemap/Hist) ███
-# ███   · Journal templates (Nature/Science/AdvMat/PRL/custom)          ███
+# ███   · Journal templates (Nature/Science/AdvMat/PRL/JGR/custom)      ███
 # ███   · Ollama three-tier cascade (grounded LLM ∧ regex ∧ prior)      ███
 # ███   · FAISS + lexical hybrid retriever (RRF fusion)                 ███
 # ███   · Side-note markdown table parser (rejects non-positive)        ███
 # ███   · Exact-XAI stacked-MoE chart with show-context toggle          ███
 # ███   · 'Best match' legend entry is OPT-IN (default OFF)             ███
 # ███   · '⭐ BEST' icon GONE — thin orange underline marks the winner   ███
+# ███ FULL (2026): OLLAMA ENHANCEMENTS                                   ███
+# ███   · User-editable Ollama server URL (localhost / LAN / remote)    ███
+# ███   · Tiered model dropdown:  ✅ installed · ⬇️ pull needed · ✏️ custom
+# ███   · Live probe: reachability · installed-count · last error       ███
+# ███   · "🔌 Test connection"  +  "🔄 Refresh models" buttons          ███
+# ███   · ollama_url threaded through recommend_param_values → cascade  ███
+# ███   · 21 curated model presets (Qwen/Llama/Mistral/Gemma/DeepSeek…)  ███
+# ███   · Fix: no more operator-precedence bug (was: `+ list() or [...]`) ███
 # ============================================================================
 # QUICK-START
 #   1.  (optional)  ollama serve && ollama pull qwen2.5:7b
@@ -171,19 +179,6 @@ def handle_errors(func):
 # ============================================================================
 # ███ SECTION 1 — GLACIER / ELMER ONTOLOGY                              ███
 # ============================================================================
-# The ontology is the SINGLE SOURCE OF TRUTH for:
-#   • parameter labels / symbols / units
-#   • UI display units (ui_unit) and ui_scale (SI → UI)
-#   • plausible_range (gatekeeper hard bounds)
-#   • soft_range     (radar / display normalization bounds)
-#   • per-material defaults
-#   • expected JSON metadata file
-#
-# Adding a parameter here automatically wires it into the recommender,
-# cascade, MoE scorer, bar/radar/Sankey/Treemap charts, and SIF generator
-# (provided SOLVER_KEY_MAP has a mapping or a passthrough name).
-# ============================================================================
-
 GLACIER_ONTOLOGY: Dict[str, Dict[str, Any]] = {
     "glen_n": {
         "label": "Glen Flow-Law Exponent",
@@ -426,7 +421,6 @@ CONTEXT_PARAM_ORDER: List[str] = [
 
 ALL_PARAMS: List[str] = GLACIER_PARAM_ORDER + CONTEXT_PARAM_ORDER
 
-# Two additional convenience groupings used by the sidebar and Lab tabs
 SIDEBAR_PARAM_ORDER: List[str] = [
     "glen_n", "rate_factor_A1", "activation_energy_Q1",
     "limit_temperature", "constant_temperature",
@@ -445,17 +439,6 @@ LAB_PARAM_ORDER: List[str] = [
 # ============================================================================
 # ███ SECTION 2 — PROVENANCE TAXONOMY (byte-faithful port)               ███
 # ============================================================================
-# Six FINE keys roll up into three COARSE buckets.  The fine keys are
-# canonical and appear in the audit legend; the coarse buckets are the
-# default main-text legend.  The mapping is exhaustive and total.
-#
-#   llm_extract    ─┐
-#   llm_reasoned   ─┴→  llm_grounded
-#   llm_prior      ──→  llm_prior
-#   regex_ner      ─┐
-#   regime_prior   ─┤  →  deterministic
-#   physics_inferred┘
-# ============================================================================
 
 FINE_PROVENANCE_KEYS: Tuple[str, ...] = (
     'llm_extract', 'llm_reasoned', 'regex_ner',
@@ -472,7 +455,6 @@ _FINE_TO_GROUP: Dict[str, str] = {
 }
 COARSE_PROVENANCE_KEYS: Tuple[str, ...] = tuple(PROVENANCE_GROUPS.keys())
 
-# ── Coarse (default) legend markers — SHAPE only ────────────────────────
 LEGEND_MARKERS: Dict[str, Dict[str, Any]] = {
     'llm_grounded':  dict(marker='D', ms=6.0, fill=True,
                           label='LLM (corpus-grounded)'),
@@ -482,7 +464,6 @@ LEGEND_MARKERS: Dict[str, Dict[str, Any]] = {
                           label='Deterministic (regex · physics-inferred)'),
 }
 
-# ── Fine (audit) legend markers — SHAPE = method, FILL = evidence ───────
 PROVENANCE_MARKERS: Dict[str, Dict[str, Any]] = {
     'llm_extract':   dict(marker='D', ms=6.0, fill=True,
                           label='LLM extraction (verbatim, grounded)'),
@@ -498,11 +479,6 @@ PROVENANCE_MARKERS: Dict[str, Dict[str, Any]] = {
                              label='Physics-inferred (Glen / Arrhenius)'),
 }
 
-# ── The pin-list: for each parameter, which COARSE bucket(s) win ────────
-# A candidate whose bucket is not in this list for its parameter enters
-# as a greyed NON-RANKED context bar (union-cascade mode).  The pin-list
-# is the mechanism that makes findings STRUCTURALLY UNCHANGEABLE — a
-# high-score context candidate can never outrank a pinned incumbent.
 INCUMBENT_ROUTES: Dict[str, Tuple[str, ...]] = {
     'glen_n':               ('deterministic',),
     'rate_factor_A1':       ('deterministic',),
@@ -517,8 +493,6 @@ INCUMBENT_ROUTES: Dict[str, Tuple[str, ...]] = {
     'gravity':              ('deterministic',),
 }
 
-# ── Backward-compat hint tables for `_norm_provenance` ──────────────────
-# The ORDER of the checks inside `_norm_provenance` is LOAD-BEARING.
 _DERIVED_HINTS: Tuple[str, ...] = (
     'physics_inferred', 'derived',
     'arrhenius_inversion', 'glen_inversion',
@@ -544,24 +518,7 @@ _LLM_HINTS: Tuple[str, ...] = ('llm', 'inferred', 'model', 'explicit')
 
 
 def _norm_provenance(p: Any) -> str:
-    """Total function: ANY input → exactly one of FINE_PROVENANCE_KEYS.
-
-    Ordering is LOAD-BEARING:
-        1. exact fine key
-        2. physics inference      — 'model_inversion' etc. NEVER LLM
-        3. regime classifier      — MUST precede prior, else compounds
-                                     like 'glen_regime_prior' become LLM
-                                     priors (the mislabel class this
-                                     ordering exists to kill)
-        4. LLM prior
-        5. LLM chain-of-thought
-        6. regex NER
-        7. grounded LLM            — 'ai' matched on word boundary only
-        8. safe default 'regex_ner'
-
-    Plain 'regime' is deliberately NOT a hint — Tier-3 LLM-within-band
-    strings still classify as llm_prior, which is correct.
-    """
+    """Total function: ANY input → exactly one of FINE_PROVENANCE_KEYS."""
     s = str(p).strip().lower()
     if s in FINE_PROVENANCE_KEYS:
         return s
@@ -584,7 +541,6 @@ _VALID_GRANULARITIES: Tuple[str, ...] = ('coarse', 'fine')
 
 
 def _norm_granularity(g: Any) -> str:
-    """Single normalization point — invalid → 'coarse'."""
     s = str(g).strip().lower() if g is not None else 'coarse'
     if s not in _VALID_GRANULARITIES:
         logger.warning("legend_granularity %r invalid — defaulting to 'coarse'", g)
@@ -593,7 +549,6 @@ def _norm_granularity(g: Any) -> str:
 
 
 def _legend_key(prov: Any, granularity: str = 'coarse') -> str:
-    """Roll any provenance string up to a legend key.  Total function."""
     granularity = _norm_granularity(granularity)
     fine = _norm_provenance(prov)
     if granularity == 'fine':
@@ -602,26 +557,18 @@ def _legend_key(prov: Any, granularity: str = 'coarse') -> str:
 
 
 def _stamp_provenance(ext: Dict[str, Any], fine_key: str) -> None:
-    """Tag an extraction dict with its canonical fine provenance key."""
     if fine_key not in FINE_PROVENANCE_KEYS:
         raise ValueError(f"not a fine key: {fine_key!r}")
     ext['_provenance'] = fine_key
 
 
 def _is_context(param: str, prov: Any) -> bool:
-    """Return True iff a candidate with provenance `prov` for `param`
-    should be treated as non-ranked context in union-cascade mode.
-
-    A candidate is context iff:
-      (a) `param` is pinned in INCUMBENT_ROUTES, AND
-      (b) its coarse bucket is not among the pinned buckets for `param`."""
     bucket = _FINE_TO_GROUP.get(_norm_provenance(prov), 'deterministic')
     pinned = INCUMBENT_ROUTES.get(param, ())
     return bool(pinned) and bucket not in pinned
 
 
 def _default_reasoning(c: Any) -> str:
-    """Fallback reasoning string when a candidate carries none."""
     prov = _norm_provenance(getattr(c, "provenance", "")
                             or getattr(c, "method", ""))
     if prov == "llm_extract":
@@ -647,10 +594,6 @@ def _default_reasoning(c: Any) -> str:
 
 # ============================================================================
 # ███ SECTION 3 — PARAM_META (chart labels)                              ███
-# ============================================================================
-# Parallel to nt-Cu PARAM_META.  Titles and symbols used in chart axes,
-# colorbar labels, and the stacked-MoE chart.  `unit=None` suppresses the
-# unit suffix in axis labels.
 # ============================================================================
 
 PARAM_META: Dict[str, Dict[str, Any]] = {
@@ -685,7 +628,6 @@ PARAM_META: Dict[str, Dict[str, Any]] = {
 # ============================================================================
 
 def normalize_tex(s: Any) -> Any:
-    """Collapse accidental double-backslashes in LaTeX strings."""
     if not isinstance(s, str):
         return s
     if '\\' not in s:
@@ -694,7 +636,6 @@ def normalize_tex(s: Any) -> Any:
 
 
 def strip_tex(s: Any) -> str:
-    """Return a plain-text fallback for a possibly-malformed mathtext."""
     if s is None:
         return ''
     return re.sub(r'[\\{}$]', '', str(s))
@@ -704,7 +645,6 @@ _MTX = MathTextParser('path')
 
 
 def safe_mathtext(s: Any, fallback: Optional[str] = None) -> str:
-    """Return `s` if it renders cleanly; otherwise a stripped fallback."""
     if s is None:
         return ''
     s = normalize_tex(str(s))
@@ -720,7 +660,6 @@ def safe_mathtext(s: Any, fallback: Optional[str] = None) -> str:
 
 def sci_tex(value: Any, unit: Optional[str] = None,
             decimals: int = 1) -> str:
-    """Format a number as mathtext (10^{e} form when out of [-1, 3])."""
     try:
         v = float(value)
     except (TypeError, ValueError):
@@ -740,7 +679,6 @@ def sci_tex(value: Any, unit: Optional[str] = None,
 
 
 def _color_to_rgb(c: Any) -> Tuple[float, float, float]:
-    """Coerce any matplotlib-acceptable colour to an RGB triple."""
     if c is None:
         return (0.7, 0.7, 0.7)
     if isinstance(c, (tuple, list, np.ndarray)) and len(c) >= 3:
@@ -760,7 +698,6 @@ def _color_to_rgb(c: Any) -> Tuple[float, float, float]:
 
 
 def _relative_luminance(rgb: Tuple[float, float, float]) -> float:
-    """Rec. 601 luminance — used to pick white vs black text on a bar."""
     r, g, b = rgb
     return 0.299 * r + 0.587 * g + 0.114 * b
 
@@ -768,14 +705,8 @@ def _relative_luminance(rgb: Tuple[float, float, float]) -> float:
 # ============================================================================
 # ███ SECTION 5 — GLACIER-SPECIFIC UNIT CONVERSION                        ███
 # ============================================================================
-# Elmer's Glen flow-law uses MPa^-n yr^-1 for A.  The catalogue may store
-# A in Pa^-n s^-1, MPa^-n s^-1, kPa^-n yr^-1, bar^-n yr^-1, etc.  The
-# conversion factor depends on the exponent n, so it MUST receive n
-# from the user's current n-candidate (or its default).
-# ============================================================================
 
 def _norm_unit_token(u: str) -> str:
-    """Canonicalise a unit token for substring matching."""
     u = (u or "").strip().lower()
     u = u.replace("μ", "u").replace("µ", "u")
     u = u.replace("·", ".").replace("•", ".").replace("*", ".")
@@ -788,11 +719,6 @@ def _norm_unit_token(u: str) -> str:
 
 
 def _detect_pressure_multiplier_to_MPa(u: str) -> float:
-    """Return the factor m such that 1 <unit> = m MPa.
-
-    Used for A (pressure exponent n) → v_MPa = v_unit × m^n
-    Used for Q (no pressure)              → v_J   = v_unit × 1
-    """
     if "gpa" in u:
         return 1.0e3
     if "mpa" in u:
@@ -811,10 +737,6 @@ def _detect_pressure_multiplier_to_MPa(u: str) -> float:
 
 
 def _detect_time_multiplier_to_yr(u: str) -> float:
-    """Return the factor m such that 1 <unit> = m yr.
-
-    Used for A (time exponent −1) → v_yr = v_unit / m
-    """
     if "yr" in u or "year" in u or "a-1" in u or "a^-1" in u \
             or u.endswith("/a") or u.endswith("a"):
         return 1.0
@@ -828,7 +750,6 @@ def _detect_time_multiplier_to_yr(u: str) -> float:
 
 
 def _detect_energy_multiplier_to_J_per_mol(u: str) -> float:
-    """Return factor such that 1 <unit> = factor J/mol for Q."""
     if "kj" in u:
         return 1.0e3
     if "kcal" in u:
@@ -843,30 +764,12 @@ def _detect_energy_multiplier_to_J_per_mol(u: str) -> float:
 def normalize_glacier_unit(value: float, unit: str, param_key: str,
                            n: float = 3.0,
                            t_ref_c: Optional[float] = None) -> float:
-    """Convert `value` from `unit` to the SI-flavoured canonical unit.
-
-    Canonical units:
-        glen_n               dimensionless
-        rate_factor_A1/A2    MPa^-n yr^-1
-        activation_energy_*  J mol^-1
-        limit/constant_T     degC
-        glen_enhancement     dimensionless
-        critical_shear_rate  s^-1
-        ice_density          kg m^-3
-        gravity              m s^-2
-
-    All temperature conversions target degC (subtract 273.15 for Kelvin).
-    `n` is the Glen exponent (defaults to 3 if unknown); `t_ref_c` is
-    unused here but reserved for temperature-dependent transformations
-    (e.g. adding a Kelvin offset when the corpus uses °K for T).
-    """
     u = _norm_unit_token(unit)
     try:
         v = float(value)
     except (TypeError, ValueError):
         return float("nan")
 
-    # ── Zero-collapse guard for strictly-positive parameters ────────────
     if v == 0.0 and param_key in _POSITIVE_LOWER_BOUND_PARAMS:
         return float("nan")
 
@@ -875,8 +778,6 @@ def normalize_glacier_unit(value: float, unit: str, param_key: str,
     if param_key in ("rate_factor_A1", "rate_factor_A2"):
         pres_mult = _detect_pressure_multiplier_to_MPa(u) ** n
         time_mult = _detect_time_multiplier_to_yr(u)
-        # A has dimensions pressure^-n × time^-1
-        # 1 <unit_A> = (pres_mult)^n × (1 / time_mult) MPa^-n yr^-1
         return v * pres_mult / max(time_mult, 1e-30)
     if param_key in ("activation_energy_Q1", "activation_energy_Q2"):
         return v * _detect_energy_multiplier_to_J_per_mol(u)
@@ -900,7 +801,6 @@ def normalize_glacier_unit(value: float, unit: str, param_key: str,
     return v
 
 
-# ── Positive-lower-bound registry for the zero-collapse guard ───────────
 _POSITIVE_LOWER_BOUND_PARAMS = frozenset({
     "glen_n", "rate_factor_A1", "rate_factor_A2",
     "activation_energy_Q1", "activation_energy_Q2",
@@ -910,7 +810,6 @@ _POSITIVE_LOWER_BOUND_PARAMS = frozenset({
 
 
 def _glacier_clamp(value: float, param: str) -> Tuple[float, bool]:
-    """Clamp to GLACIER_ONTOLOGY[param]['valid_range']; return clamped?"""
     lo, hi = GLACIER_ONTOLOGY[param]["valid_range"]
     if value < lo:
         return lo, True
@@ -920,7 +819,6 @@ def _glacier_clamp(value: float, param: str) -> Tuple[float, bool]:
 
 
 def glacier_fmt(param: str, si_value: float) -> str:
-    """Format an SI value of `param` in the UI unit."""
     spec = GLACIER_ONTOLOGY[param]
     ui_val = si_value / spec["ui_scale"]
     if param in ("rate_factor_A1", "rate_factor_A2"):
@@ -944,12 +842,6 @@ def glacier_fmt(param: str, si_value: float) -> str:
 
 # ============================================================================
 # ███ SECTION 6 — GAZETTEER + ENTITY PATTERNS                            ███
-# ============================================================================
-# The gazetteer maps an entity type to a list of canonical aliases.  The
-# regex compiler applies word-boundary rules so that "ice" doesn't match
-# "police" and "n" doesn't match "nan".  Each alias can include spaces and
-# underscores; the compiler interleaves `[\s_\-]{0,2}` between adjacent
-# alnum characters to tolerate light punctuation noise.
 # ============================================================================
 
 GAZETTEER: Dict[str, List[str]] = {
@@ -1086,7 +978,6 @@ GAZETTEER: Dict[str, List[str]] = {
 }
 
 
-# ── Unicode folding table for `norm_text` ───────────────────────────────
 _CHAR_FOLD = {
     "μ": "mu", "µ": "mu", "ρ": "rho", "–": "-", "—": "-",
     "’": "'", "‘": "'", "“": '"', "”": '"',
@@ -1101,7 +992,6 @@ _CHAR_FOLD = {
 
 
 def norm_text(s: Any) -> str:
-    """Aggressively normalise text for entity matching."""
     s = unicodedata.normalize("NFKC", str(s))
     for k, v in _CHAR_FOLD.items():
         s = s.replace(k, v)
@@ -1112,11 +1002,6 @@ def norm_text(s: Any) -> str:
 
 
 def alias_pattern(alias: str) -> str:
-    """Build a word-bounded regex from an alias string.
-
-    Adjacent alnum characters are separated by `[\\s_\\-]{0,2}` so that
-    the alias tolerates light punctuation noise.  Leading/trailing
-    lookarounds ensure we don't match inside larger tokens."""
     a = norm_text(alias)
     out = []
     for i, ch in enumerate(a):
@@ -1134,10 +1019,6 @@ ENTITY_PATTERNS: Dict[str, List[re.Pattern]] = {
 
 # ============================================================================
 # ███ SECTION 7 — PARAM_CANON (gatekeeper bounds + aliases)              ███
-# ============================================================================
-# PARAM_CANON is a lighter-weight view onto the ontology used by the
-# LLM prompts and gatekeeper.  It defines plausible hard bounds (the
-# gatekeeper rejects out-of-bound values) plus a shorter alias list.
 # ============================================================================
 
 PARAM_CANON: Dict[str, Dict[str, Any]] = {
@@ -1235,15 +1116,12 @@ PARAM_CANON: Dict[str, Dict[str, Any]] = {
 }
 
 
-# ── Canonical alias → PARAM_CANON key map ───────────────────────────────
 _PARAM_ALIASES: Dict[str, str] = {
-    # glen_n
     "n": "glen_n", "glen_n": "glen_n", "glen exponent": "glen_n",
     "stress exponent": "glen_n", "creep exponent": "glen_n",
     "flow law exponent": "glen_n", "flow-law exponent": "glen_n",
     "power law exponent": "glen_n", "power-law exponent": "glen_n",
     "n_glen": "glen_n", "srs index": "glen_n",
-    # rate_factor_A1
     "a1": "rate_factor_A1", "a_1": "rate_factor_A1",
     "rate factor": "rate_factor_A1", "rate_factor": "rate_factor_A1",
     "arrhenius rate factor": "rate_factor_A1",
@@ -1255,24 +1133,20 @@ _PARAM_ALIASES: Dict[str, str] = {
     "cold rate factor": "rate_factor_A1",
     "glen rate factor": "rate_factor_A1",
     "a_rate": "rate_factor_A1",
-    # rate_factor_A2
     "a2": "rate_factor_A2", "a_2": "rate_factor_A2",
     "warm rate factor": "rate_factor_A2",
     "temperate rate factor": "rate_factor_A2",
     "warm softness": "rate_factor_A2",
-    # activation_energy_Q1
     "q1": "activation_energy_Q1", "q_1": "activation_energy_Q1",
     "activation energy": "activation_energy_Q1",
     "creep activation energy": "activation_energy_Q1",
     "activation enthalpy": "activation_energy_Q1",
     "cold activation energy": "activation_energy_Q1",
     "arrhenius activation energy": "activation_energy_Q1",
-    # activation_energy_Q2
     "q2": "activation_energy_Q2", "q_2": "activation_energy_Q2",
     "warm activation energy": "activation_energy_Q2",
     "temperate activation energy": "activation_energy_Q2",
     "high-temperature activation": "activation_energy_Q2",
-    # limit_temperature
     "limit temperature": "limit_temperature",
     "limit_temperature": "limit_temperature",
     "regime switch temperature": "limit_temperature",
@@ -1280,21 +1154,18 @@ _PARAM_ALIASES: Dict[str, str] = {
     "transition temperature": "limit_temperature",
     "t_star": "limit_temperature", "t-limit": "limit_temperature",
     "arrhenius transition temperature": "limit_temperature",
-    # constant_temperature
     "constant temperature": "constant_temperature",
     "constant_temperature": "constant_temperature",
     "isothermal temperature": "constant_temperature",
     "ice temperature": "constant_temperature",
     "temperature": "constant_temperature",
     "mean temperature": "constant_temperature",
-    # glen_enhancement
     "enhancement factor": "glen_enhancement",
     "glen_enhancement": "glen_enhancement",
     "enhancement": "glen_enhancement",
     "e factor": "glen_enhancement", "e": "glen_enhancement",
     "fabric enhancement": "glen_enhancement",
     "softening factor": "glen_enhancement",
-    # critical_shear_rate
     "critical shear rate": "critical_shear_rate",
     "critical_shear_rate": "critical_shear_rate",
     "critical strain rate": "critical_shear_rate",
@@ -1302,20 +1173,17 @@ _PARAM_ALIASES: Dict[str, str] = {
     "shear rate floor": "critical_shear_rate",
     "strain rate floor": "critical_shear_rate",
     "gamma_dot_c": "critical_shear_rate",
-    # ice_density
     "ice density": "ice_density", "ice_density": "ice_density",
     "density": "ice_density", "rho ice": "ice_density",
     "mass density": "ice_density", "bulk density": "ice_density",
     "firn density": "ice_density",
     "rho_ice": "ice_density", "rho_i": "ice_density",
-    # gravity
     "gravity": "gravity", "gravitational acceleration": "gravity",
     "g": "gravity", "g_acc": "gravity",
 }
 
 
 def _canonicalize_param(raw_p: str) -> Optional[str]:
-    """Best-effort canonicalisation of a raw param name to a GLACIER key."""
     if raw_p is None:
         return None
     p = str(raw_p).strip()
@@ -1344,9 +1212,6 @@ def _canonicalize_param(raw_p: str) -> Optional[str]:
 # ============================================================================
 
 def _coerce_value(item: Dict[str, Any]) -> Tuple[Optional[float], str]:
-    """Coerce `item['value']` to a float even if it's a sci-notation
-    string like "3.5 × 10^-25".  Also returns the trailing unit string
-    if the value's unit is embedded in the string."""
     raw_v = item.get("value")
     explicit_unit = str(item.get("unit") or "").strip()
     if isinstance(raw_v, (int, float)) and not isinstance(raw_v, bool):
@@ -1380,8 +1245,6 @@ def _glacier_hash(text: str) -> str:
 # ============================================================================
 
 def parse_elmer_sif_context(sif_file_path: str) -> Dict[str, Any]:
-    """Read an existing Elmer SIF and extract parameters + boundary IDs
-    to seed the recommender as CONTEXT (never as a verbatim hit)."""
     if not os.path.exists(sif_file_path):
         return {"error": "File not found", "path": sif_file_path}
     try:
@@ -1494,8 +1357,6 @@ UNIT_TOKENS: Dict[str, str] = {
 
 
 def unit_regex_for(param_key: str) -> Optional[str]:
-    """Return the alternation regex that matches any unit acceptable for
-    `param_key`.  Used by `find_value_after` to disambiguate hits."""
     spec = GLACIER_ONTOLOGY.get(param_key, {})
     u = spec.get("unit")
     if u is None and param_key not in ("glen_n", "glen_enhancement"):
@@ -1526,7 +1387,6 @@ def _num_value(m: "re.Match") -> float:
 
 def find_value_after(text: str, pos: int, param_key: str,
                      window: int = 90) -> Optional[Dict[str, Any]]:
-    """Return the best numeric candidate following `pos` in `text`."""
     ure = unit_regex_for(param_key)
     seg = text[pos: pos + window]
     best = None
@@ -1543,7 +1403,6 @@ def find_value_after(text: str, pos: int, param_key: str,
 
 def _value_from_cell(key: str, val: str, param_key: str
                      ) -> Tuple[Optional[float], Optional[str]]:
-    """Extract (value, unit) from a structured key/value cell."""
     kt = norm_text(key)
     vt = norm_text(val)
     ure = unit_regex_for(param_key)
@@ -1562,12 +1421,6 @@ def _value_from_cell(key: str, val: str, param_key: str
 # ============================================================================
 # ███ SECTION 11 — SIDE-NOTE TABLE PARSER                                ███
 # ============================================================================
-# Parses markdown table rows of the form:
-#     | shear modulus | 47.19 | GPa |
-# and emits a dict with (param, value, unit, evidence, method).
-# REJECTS values ≤ 0 — this kills the "0.000 GPa" degenerate collapse that
-# silently poisons downstream physics.
-# ============================================================================
 
 _SIDE_NOTE_ROW_RE = re.compile(
     r"\|\s*(?P<key>[A-Za-z][A-Za-z0-9_'λσνβ·\-\s]{0,40}?)\s*\|"
@@ -1578,14 +1431,12 @@ _SIDE_NOTE_ROW_RE = re.compile(
 )
 
 _SIDE_NOTE_KEY_MAP: Dict[str, str] = {
-    # glen n
     "glen exponent":            "glen_n",
     "glen flow law exponent":   "glen_n",
     "flow law exponent":        "glen_n",
     "stress exponent":          "glen_n",
     "creep exponent":           "glen_n",
     "power law exponent":       "glen_n",
-    # rate factor
     "rate factor":              "rate_factor_A1",
     "arrhenius rate factor":    "rate_factor_A1",
     "pre-exponential":          "rate_factor_A1",
@@ -1593,13 +1444,11 @@ _SIDE_NOTE_KEY_MAP: Dict[str, str] = {
     "softness parameter":       "rate_factor_A1",
     "flow law coefficient":     "rate_factor_A1",
     "warm rate factor":         "rate_factor_A2",
-    # activation energy
     "activation energy":        "activation_energy_Q1",
     "activation enthalpy":      "activation_energy_Q1",
     "creep activation energy":  "activation_energy_Q1",
     "cold activation energy":   "activation_energy_Q1",
     "warm activation energy":   "activation_energy_Q2",
-    # temperatures
     "limit temperature":        "limit_temperature",
     "transition temperature":   "limit_temperature",
     "regime switch temperature": "limit_temperature",
@@ -1607,27 +1456,22 @@ _SIDE_NOTE_KEY_MAP: Dict[str, str] = {
     "ice temperature":          "constant_temperature",
     "isothermal temperature":   "constant_temperature",
     "temperature":              "constant_temperature",
-    # enhancement
     "enhancement factor":       "glen_enhancement",
     "glen enhancement":         "glen_enhancement",
     "fabric enhancement":       "glen_enhancement",
-    # shear rate
     "critical shear rate":      "critical_shear_rate",
     "regularisation shear rate": "critical_shear_rate",
     "shear rate floor":         "critical_shear_rate",
-    # density
     "ice density":              "ice_density",
     "glacier ice density":      "ice_density",
     "firn density":             "ice_density",
     "density":                  "ice_density",
-    # gravity
     "gravity":                  "gravity",
     "gravitational acceleration": "gravity",
 }
 
 
 def parse_side_note_table(text: str) -> List[Dict[str, Any]]:
-    """Parse markdown table rows; REJECT non-positive values."""
     out: List[Dict[str, Any]] = []
     for m in _SIDE_NOTE_ROW_RE.finditer(text):
         key_norm = norm_text(m.group("key")).strip(" -|").lower()
@@ -1669,7 +1513,6 @@ def parse_side_note_table(text: str) -> List[Dict[str, Any]]:
 # ============================================================================
 
 def flatten_keyvals(node: Any, path: str = "") -> List[Tuple[str, str, str]]:
-    """Flatten a nested dict/list into a list of (path, key, value) triples."""
     out: List[Tuple[str, str, str]] = []
     if isinstance(node, dict):
         for k, v in node.items():
@@ -1685,7 +1528,6 @@ def flatten_keyvals(node: Any, path: str = "") -> List[Tuple[str, str, str]]:
 
 
 def record_text(data: Any) -> str:
-    """Render a metadata record as a flat text blob for retrieval."""
     return "; ".join(f"{k}: {v}" for _, k, v in flatten_keyvals(data))
 
 
@@ -1697,12 +1539,6 @@ def heuristic_extract(records: List[Dict[str, Any]],
                       param_key: str,
                       target_unit: Optional[str] = None
                       ) -> List[Dict[str, Any]]:
-    """Deterministic regex NER: three passes.
-
-      (a) structured key/value cells
-      (b) free-text scan next to each alias
-      (c) side-note markdown table rows
-    """
     canon = GLACIER_ONTOLOGY.get(param_key, {})
     tu = (target_unit or canon.get("unit") or "").lower()
     key_pats = [re.compile(alias_pattern(a))
@@ -1713,7 +1549,6 @@ def heuristic_extract(records: List[Dict[str, Any]],
         text = rec.get("text_norm") or norm_text(rec.get("text", ""))
         raw = rec.get("text", text)
 
-        # (a) structured cells
         for path, key, val in flatten_keyvals(rec.get("data", {})):
             if not any(p.search(norm_text(key)) for p in key_pats):
                 continue
@@ -1728,7 +1563,6 @@ def heuristic_extract(records: List[Dict[str, Any]],
                 "path": path,
             })
 
-        # (b) free-text
         for p in key_pats:
             for m in p.finditer(text):
                 hit = find_value_after(text, m.end(), param_key)
@@ -1748,7 +1582,6 @@ def heuristic_extract(records: List[Dict[str, Any]],
                     "path": "",
                 })
 
-        # (c) side-note tables
         for row in parse_side_note_table(raw):
             if row["param"] != param_key:
                 continue
@@ -1780,11 +1613,6 @@ def heuristic_extract(records: List[Dict[str, Any]],
 
 # ============================================================================
 # ███ SECTION 14 — GLACIER REGIME TABLES                                 ███
-# ============================================================================
-# Three curated tables:
-#   GLEN_N_REGIMES       keyed by (stress_regime, thermal_state, fabric)
-#   ARRHENIUS_REGIMES    keyed by (thermal_state, impurity) for A1/A2 ratio
-#   FABRIC_REGIMES       keyed by (fabric, thermal_state) for enhancement E
 # ============================================================================
 
 GLEN_N_REGIMES: Dict[Tuple[str, str, str], Dict[str, Any]] = {
@@ -1818,9 +1646,6 @@ GLEN_N_REGIMES: Dict[Tuple[str, str, str], Dict[str, Any]] = {
 }
 
 ARRHENIUS_REGIMES: Dict[Tuple[str, str], Dict[str, Any]] = {
-    # (thermal, impurity) → A-warm regime.  Cold A is fixed at the
-    # Cuffey-Paterson reference (1.14e-5 MPa^-3 yr^-1 for A1 in Elmer's
-    # year-based unit convention).
     ("cold",       "clean"):    dict(
         low=1e-8, high=1e-2, bench=1.14e-5,
         desc="Cold polar ice — very stiff (Cuffey-Paterson A_cold)"),
@@ -1872,8 +1697,6 @@ ARRHENIUS_Q_REGIMES: Dict[str, Dict[str, Any]] = {
 }
 
 
-# ── Regime normalisers ─────────────────────────────────────────────────
-
 def _norm_stress_regime(s: Optional[str]) -> Optional[str]:
     s = (s or "").lower()
     if any(k in s for k in ("high", "fast", "shear-dominated",
@@ -1883,17 +1706,13 @@ def _norm_stress_regime(s: Optional[str]) -> Optional[str]:
                             "divide", "dome")):
         return "low"
     return None
-  
-#
+
+
 def _norm_fabric(s: Optional[Any]) -> Optional[str]:
-    """Normalise fabric / architecture. Handles strings robustly."""
     if s is None:
         return None
-    
-    # If it's not a string, convert safely
     if not isinstance(s, str):
         s = str(s)
-        
     s = s.lower()
     if any(k in s for k in ("single-max", "single max", "multi-max",
                             "multi max", "anisotropic", "lpo", "cpo",
@@ -1902,14 +1721,11 @@ def _norm_fabric(s: Optional[Any]) -> Optional[str]:
     if any(k in s for k in ("isotropic", "random", "equiaxed")):
         return "isotropic"
     return None
-  
-#
+
+
 def _norm_temp_regime(s: Optional[Any]) -> Optional[str]:
-    """Normalise thermal state. Handles both string labels and numeric °C."""
     if s is None:
         return None
-    
-    # If a numeric temperature is passed, map it to a regime string
     if isinstance(s, (int, float)):
         if float(s) <= -10.0:
             return "cold"
@@ -1917,8 +1733,6 @@ def _norm_temp_regime(s: Optional[Any]) -> Optional[str]:
             return "temperate"
         else:
             return "polythermal"
-    
-    # Otherwise, parse the string
     s = str(s).lower()
     if any(k in s for k in ("cold", "polar", "cold-based")):
         return "cold"
@@ -1936,7 +1750,6 @@ def _norm_temp_regime(s: Optional[Any]) -> Optional[str]:
 def classify_glen_n_regime(stress: Optional[str],
                            temp: Optional[str],
                            fabric: Optional[str]) -> Dict[str, Any]:
-    """Three-factor classifier: (stress, thermal, fabric) → Glen-n band."""
     s = _norm_stress_regime(stress)
     t = _norm_temp_regime(temp)
     f = _norm_fabric(fabric) or "isotropic"
@@ -1945,11 +1758,6 @@ def classify_glen_n_regime(stress: Optional[str],
         r = GLEN_N_REGIMES.get((s, t, f)) or \
             GLEN_N_REGIMES.get((s, t, "isotropic"))
     if r is None:
-        # Relax each factor in turn (stress → thermal → fabric) to try a
-        # partial-match fallback that still honours the most specific
-        # known factor.  This is the v10.1.1 "regime-before-prior"
-        # ordering — the classifier NEVER silently promotes to a
-        # different regime family without recording it.
         if s and t:
             r = GLEN_N_REGIMES.get((s, t, "isotropic"))
         if r is None and s:
@@ -1970,7 +1778,6 @@ def classify_glen_n_regime(stress: Optional[str],
 def classify_rate_factor_regime(temp: Optional[str],
                                 fabric: Optional[str],
                                 impurity: str = "clean") -> Dict[str, Any]:
-    """Two-factor classifier: (thermal, impurity) → A-warm band."""
     t = _norm_temp_regime(temp)
     f = _norm_fabric(fabric) or "isotropic"
     imp = impurity if impurity in ("clean", "dust") else "clean"
@@ -1989,7 +1796,6 @@ def classify_rate_factor_regime(temp: Optional[str],
 
 
 def classify_activation_q_regime(temp_c: Optional[float]) -> Dict[str, Any]:
-    """Single-factor classifier: temperature (°C) → Q cold/warm/transitional."""
     if temp_c is None:
         r = ARRHENIUS_Q_REGIMES["transitional"]
         return dict(regime=r["desc"], low=r["low"], high=r["high"],
@@ -2009,7 +1815,6 @@ def classify_activation_q_regime(temp_c: Optional[float]) -> Dict[str, Any]:
 
 def classify_fabric_regime(fabric: Optional[str],
                            temp: Optional[str]) -> Dict[str, Any]:
-    """Two-factor classifier for the enhancement factor E."""
     f = _norm_fabric(fabric) or "isotropic"
     t = _norm_temp_regime(temp) or "cold"
     r = FABRIC_REGIMES.get((f, t))
@@ -2026,14 +1831,6 @@ def classify_fabric_regime(fabric: Optional[str],
 
 # ============================================================================
 # ███ SECTION 16 — LLM PROMPT TEMPLATES                                   ███
-# ============================================================================
-# Three prompt families:
-#   build_extraction_prompt         — Tier 1 verbatim
-#   build_prior_inference_prompt    — Tier 3 parametric reasoning
-#   build_regime_prior_prompt       — Tier 3b regime-bounded reasoning
-#
-# All three enforce: (1) SI units where possible, (2) JSON-array-only
-# output, (3) confidence caps for inferred values.
 # ============================================================================
 
 def build_extraction_prompt(param_key: str, material: str,
@@ -2161,27 +1958,69 @@ EVIDENCE (context only):
 
 
 # ============================================================================
-# ███ SECTION 17 — OLLAMA CLIENT                                          ███
+# ███ SECTION 17 — OLLAMA CLIENT (enhanced for multi-host + discovery)   ███
 # ============================================================================
+
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+
+# Curated catalogue of common Ollama model tags.  These are offered as
+# PULL SUGGESTIONS when a model is not installed on the target server.
+OLLAMA_MODEL_PRESETS: Dict[str, str] = {
+    "🦙 qwen2.5:0.5b  (fastest, CPU OK)":             "qwen2.5:0.5b",
+    "🦙 qwen2.5:1.5b  (balanced, small)":             "qwen2.5:1.5b",
+    "🦙 qwen2.5:3b    (balanced)":                    "qwen2.5:3b",
+    "🦙 qwen2.5:7b    (recommended for RAG)":         "qwen2.5:7b",
+    "🦙 qwen2.5:14b   (max reasoning)":               "qwen2.5:14b",
+    "🦙 qwen2.5:32b   (highest quality)":             "qwen2.5:32b",
+    "🦙 qwen2.5-coder:7b  (JSON / code specialist)":  "qwen2.5-coder:7b",
+    "🦙 llama3.1:8b   (Meta standard)":               "llama3.1:8b",
+    "🦙 llama3.2:3b   (Meta compact)":                "llama3.2:3b",
+    "🦙 llama3.3:70b  (Meta large)":                  "llama3.3:70b",
+    "🦙 mistral:7b    (high JSON reliability)":       "mistral:7b",
+    "🦙 mistral-nemo:12b  (balanced JSON)":           "mistral-nemo:12b",
+    "🦙 gemma2:9b     (scientific nuance)":           "gemma2:9b",
+    "🦙 gemma2:27b    (scientific nuance, large)":    "gemma2:27b",
+    "🦙 falcon3:10b   (instruction following)":       "falcon3:10b",
+    "🦙 phi3:14b      (compact reasoning)":           "phi3:14b",
+    "🦙 phi4:14b      (newest compact reasoning)":    "phi4:14b",
+    "🦙 deepseek-r1:7b   (chain-of-thought)":         "deepseek-r1:7b",
+    "🦙 deepseek-r1:14b  (deep reasoning)":           "deepseek-r1:14b",
+    "🦙 deepseek-r1:32b  (deep reasoning, large)":    "deepseek-r1:32b",
+    "🦙 command-r:35b    (enterprise reasoning)":     "command-r:35b",
+    "🦙 command-r-plus:104b  (enterprise XL)":        "command-r-plus:104b",
+}
+
+# A practical default that works even on a fresh Ollama install.
+DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"
+
 
 class GlacierOllamaClient:
     """Thin wrapper around Ollama /api/generate returning parsed JSON.
 
     Retries with linear backoff; `format='json'` instructs Ollama to
-    enforce JSON grammar.  Graceful fallback to None on all errors."""
+    enforce JSON grammar.  Graceful fallback to None on all errors.
 
-    def __init__(self, url: str = "http://localhost:11434",
-                 model: str = "qwen2.5:7b",
+    v10.1.1-glacier-full extension: the host URL is a first-class
+    attribute so the app can target a remote Ollama server (e.g. a LAN
+    box or a cloud VM) rather than only localhost.
+    """
+
+    def __init__(self, url: str = DEFAULT_OLLAMA_URL,
+                 model: str = DEFAULT_OLLAMA_MODEL,
                  timeout: float = 120.0, max_retries: int = 2):
-        self.url = url.rstrip("/")
-        self.model = model
+        self.url = url.rstrip("/") if url else DEFAULT_OLLAMA_URL
+        self.model = model or DEFAULT_OLLAMA_MODEL
         self.timeout = timeout
         self.max_retries = max_retries
 
+    # ── Availability probes ─────────────────────────────────────────
     @staticmethod
-    def is_available(url: str = "http://localhost:11434") -> bool:
-        if not REQUESTS_AVAILABLE:
+    def is_available(url: str = DEFAULT_OLLAMA_URL) -> bool:
+        """Return True iff `GET {url}/api/tags` answers 200."""
+        if not REQUESTS_AVAILABLE or _requests is None:
             return False
+        if not url:
+            url = DEFAULT_OLLAMA_URL
         try:
             r = _requests.get(f"{url.rstrip('/')}/api/tags", timeout=2.0)
             return r.status_code == 200
@@ -2189,26 +2028,102 @@ class GlacierOllamaClient:
             return False
 
     @staticmethod
-    def list_models(url: str = "http://localhost:11434") -> List[str]:
-        if not REQUESTS_AVAILABLE:
+    def list_models(url: str = DEFAULT_OLLAMA_URL) -> List[str]:
+        """Return installed model names, or [] on any failure.
+
+        Never raises.  Accepts an override URL so the caller can point
+        at a remote Ollama daemon.
+        """
+        if not REQUESTS_AVAILABLE or _requests is None:
             return []
+        if not url:
+            url = DEFAULT_OLLAMA_URL
         try:
             r = _requests.get(f"{url.rstrip('/')}/api/tags", timeout=3.0)
-            if r.status_code == 200:
-                return sorted(m.get("name", "") for m in r.json().get("models", []))
-        except Exception:
-            pass
-        return []
+            if r.status_code != 200:
+                return []
+            data = r.json() or {}
+            models = data.get("models", []) or []
+            names = []
+            for m in models:
+                if isinstance(m, dict):
+                    n = m.get("name") or m.get("model") or ""
+                    if n:
+                        names.append(n)
+                elif isinstance(m, str):
+                    names.append(m)
+            return sorted(set(names))
+        except Exception as e:
+            logger.info("list_models(%s) failed: %s", url, e)
+            return []
 
+    @staticmethod
+    def probe(url: str = DEFAULT_OLLAMA_URL) -> Dict[str, Any]:
+        """Return a status dict: reachable, installed, error, url, model_count."""
+        if not url:
+            url = DEFAULT_OLLAMA_URL
+        url = url.rstrip("/")
+        status: Dict[str, Any] = {
+            "url": url,
+            "reachable": False,
+            "installed": [],
+            "model_count": 0,
+            "error": None,
+        }
+        if not REQUESTS_AVAILABLE or _requests is None:
+            status["error"] = "requests library not installed"
+            return status
+        try:
+            r = _requests.get(f"{url}/api/tags", timeout=3.0)
+            if r.status_code == 200:
+                status["reachable"] = True
+                data = r.json() or {}
+                models = data.get("models", []) or []
+                names: List[str] = []
+                for m in models:
+                    if isinstance(m, dict):
+                        n = m.get("name") or m.get("model") or ""
+                        if n:
+                            names.append(n)
+                    elif isinstance(m, str):
+                        names.append(m)
+                status["installed"] = sorted(set(names))
+                status["model_count"] = len(status["installed"])
+            else:
+                status["error"] = f"HTTP {r.status_code}"
+        except Exception as e:
+            status["error"] = str(e)
+        return status
+
+    @staticmethod
+    def default_for_url(url: str = DEFAULT_OLLAMA_URL) -> str:
+        """Best-guess default model for the given server.
+
+        Preference order:
+          1. qwen2.5:7b if installed
+          2. first installed model
+          3. DEFAULT_OLLAMA_MODEL (may not be installed yet)
+        """
+        installed = GlacierOllamaClient.list_models(url)
+        if DEFAULT_OLLAMA_MODEL in installed:
+            return DEFAULT_OLLAMA_MODEL
+        if installed:
+            return installed[0]
+        return DEFAULT_OLLAMA_MODEL
+
+    # ── JSON generation ─────────────────────────────────────────────
     def generate_json(self, prompt: str,
                       system: Optional[str] = None,
                       debug: bool = False) -> Optional[Any]:
-        if not REQUESTS_AVAILABLE:
+        if not REQUESTS_AVAILABLE or _requests is None:
             return None
         payload: Dict[str, Any] = {
-            "model": self.model, "prompt": prompt, "stream": False,
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
             "format": "json",
-            "options": {"temperature": 0.1, "top_p": 0.9, "num_predict": 4096},
+            "options": {"temperature": 0.1, "top_p": 0.9,
+                        "num_predict": 4096},
         }
         if system:
             payload["system"] = system
@@ -2224,8 +2139,9 @@ class GlacierOllamaClient:
                                 str(raw)[:800])
                 return parsed
             except Exception as e:
-                logger.warning("Ollama attempt %d failed: %s",
-                               attempt + 1, e)
+                logger.warning("Ollama attempt %d/%d failed (%s): %s",
+                               attempt + 1, self.max_retries + 1,
+                               self.model, e)
                 if attempt == self.max_retries:
                     return None
                 time.sleep(0.75 * (attempt + 1))
@@ -2267,13 +2183,13 @@ def parse_llm_json(raw: str) -> list:
         return []
 
 
-def ollama_extract(prompt: str, model: str = "qwen2.5:7b",
-                   host: str = "http://localhost:11434",
+def ollama_extract(prompt: str, model: str = DEFAULT_OLLAMA_MODEL,
+                   host: str = DEFAULT_OLLAMA_URL,
                    timeout: int = 120) -> str:
     """Single-shot Ollama generate returning the raw response string."""
-    if not REQUESTS_AVAILABLE:
+    if not REQUESTS_AVAILABLE or _requests is None:
         raise RuntimeError("requests not installed")
-    r = _requests.post(f"{host}/api/generate",
+    r = _requests.post(f"{host.rstrip('/')}/api/generate",
                        json={"model": model, "prompt": prompt,
                              "stream": False,
                              "options": {"temperature": 0}},
@@ -2282,12 +2198,64 @@ def ollama_extract(prompt: str, model: str = "qwen2.5:7b",
     return r.json().get("response", "")
 
 
+def build_ollama_model_options(
+    url: str,
+    force_refresh: bool = False,
+) -> Tuple[Dict[str, str], Dict[str, Any]]:
+    """Build the sidebar dropdown options for `url`.
+
+    Returns
+    -------
+    options : Dict[str, str]
+        Maps display label → Ollama model tag (or "" for disable,
+        "__custom__" for the manual-entry sentinel).
+    status : Dict[str, Any]
+        Output of `GlacierOllamaClient.probe(url)` plus `default_model`.
+
+    The returned `options` dict is ordered as:
+      1. ``(disable LLM)``
+      2. Installed models (prefixed ✅)
+      3. Preset models NOT installed (prefixed ⬇️ = pull needed)
+      4. ``✏️ Custom model name…`` sentinel
+    """
+    cache_key = f"_ollama_probe_cache::{url}"
+    if not force_refresh and cache_key in st.session_state:
+        status = st.session_state[cache_key]
+    else:
+        status = GlacierOllamaClient.probe(url)
+        st.session_state[cache_key] = status
+
+    installed: List[str] = list(status.get("installed", []) or [])
+    status["default_model"] = (
+        DEFAULT_OLLAMA_MODEL if DEFAULT_OLLAMA_MODEL in installed
+        else (installed[0] if installed else DEFAULT_OLLAMA_MODEL)
+    )
+
+    options: Dict[str, str] = OrderedDict()
+    options["⚡ (disable LLM — rule-based only)"] = ""
+
+    # Installed models first — the most useful entries
+    for m in installed:
+        star = " ⭐" if m == DEFAULT_OLLAMA_MODEL else ""
+        options[f"✅ {m}{star} (installed)"] = m
+
+    # Presets that are NOT installed — pull suggestions
+    for display, name in OLLAMA_MODEL_PRESETS.items():
+        if name in installed:
+            continue
+        options[f"{display}   ⬇️ pull needed"] = name
+
+    # Manual-entry escape hatch
+    options["✏️ Custom model name (manual entry)…"] = "__custom__"
+
+    return options, status
+
+
 # ============================================================================
 # ███ SECTION 18 — CORPUS + HYBRID RETRIEVER                             ███
 # ============================================================================
 
 def load_corpus_folder(folder: str) -> Dict[str, Any]:
-    """Load every *.json file in `folder` into a dict keyed by filename."""
     corpus: Dict[str, Any] = {}
     if not os.path.isdir(folder):
         return corpus
@@ -2303,7 +2271,6 @@ def load_corpus_folder(folder: str) -> Dict[str, Any]:
 
 
 def iter_corpus_records(corpus: Any) -> List[Dict[str, Any]]:
-    """Flatten any corpus dict/list into a list of records with an id."""
     records: List[Dict[str, Any]] = []
     if isinstance(corpus, dict):
         for fname, data in corpus.items():
@@ -2325,7 +2292,6 @@ def _spans(text: str,
 def score_record(text: str, param_key: str, material: str = "ice",
                  value_hints: Optional[List[str]] = None
                  ) -> Tuple[float, List[str]]:
-    """Lexical relevance score for a candidate record."""
     score, why = 0.0, []
     mat = _spans(text, ENTITY_PATTERNS["material"])
     props = _spans(text, ENTITY_PATTERNS["property"])
@@ -2362,7 +2328,6 @@ def score_record(text: str, param_key: str, material: str = "ice",
 
 
 def rrf(rank_lists: List[List[str]], k: int = 60) -> List[str]:
-    """Reciprocal Rank Fusion across multiple rank lists."""
     agg: Dict[str, float] = {}
     for lst in rank_lists:
         for r, rid in enumerate(lst):
@@ -2373,7 +2338,6 @@ def rrf(rank_lists: List[List[str]], k: int = 60) -> List[str]:
 def build_query_texts(material: str, param_key: str,
                       value_hints: Optional[List[str]] = None
                       ) -> List[str]:
-    """Build dense-retrieval query texts for a target parameter."""
     props = GLACIER_ONTOLOGY.get(param_key, {}).get("aliases", [param_key])[:3]
     texts = [f"{material} {p} glen flow law" for p in props]
     texts += [f"{material} {p} cuffey paterson" for p in props]
@@ -2383,12 +2347,7 @@ def build_query_texts(material: str, param_key: str,
 
 
 class HybridRetriever:
-    """Lexical + dense (FAISS/SBERT) retriever with RRF fusion.
-
-    If FAISS or SBERT are unavailable, degrades gracefully to
-    lexical-only mode without raising.  Score records can be filtered
-    by `material`, `value_hints`, and `param_key`.
-    """
+    """Lexical + dense (FAISS/SBERT) retriever with RRF fusion."""
 
     def __init__(self, corpus: Any, use_dense: bool = True):
         self.records = iter_corpus_records(corpus)
@@ -2440,7 +2399,6 @@ class HybridRetriever:
 @st.cache_resource(show_spinner=False)
 def get_retriever(folder: str = "json_metadatabase",
                   use_dense: bool = True) -> HybridRetriever:
-    """Streamlit-cached hybrid retriever factory."""
     corpus = load_corpus_folder(folder)
     return HybridRetriever(corpus, use_dense=use_dense)
 
@@ -2451,7 +2409,6 @@ def get_retriever(folder: str = "json_metadatabase",
 
 @dataclass
 class ValueCandidate:
-    """Raw tier output before MoE scoring."""
     value: float
     unit: str
     provenance: str
@@ -2487,7 +2444,6 @@ class ValueCandidate:
 
 @dataclass
 class GlacierCandidate:
-    """MoE-scored candidate ready for display and SIF generation."""
     param: str
     value_si: float
     raw_value: float
@@ -2538,9 +2494,6 @@ class GlacierCandidate:
 
 # ============================================================================
 # ███ SECTION 20 — GATEKEEPER                                            ███
-# ============================================================================
-# Gatekeep coerces units, rejects out-of-range and non-positive values,
-# dedupes, applies confidence caps, and passes through `_context`.
 # ============================================================================
 
 def gatekeep(items: List[Dict[str, Any]], param_key: str,
@@ -2717,24 +2670,6 @@ class FabricRegimeExpert:
 
 # ============================================================================
 # ███ SECTION 22 — 10-EXPERT LATENT MoE SCORER                           ███
-# ============================================================================
-# Ten experts, linear weights, sum to 1.00:
-#
-#    Material         0.15
-#    Thermal          0.10
-#    Strain           0.05
-#    Method           0.10
-#    Confidence       0.05
-#    Reasoning        0.10
-#    Regime (A)       0.15    ← Glen-n / A / Q / E regime experts
-#    Arrhenius (B)    0.15    ← Arrhenius coupling between T and A/Q
-#    Fabric (C)       0.10    ← anisotropy vs enhancement consistency
-#    Corpus Density   0.05    ← provenance-binned evidence density
-#   ----------------------
-#    Sum              1.00
-#
-# Because the aggregation is deterministic and linear, the per-expert
-# breakdown IS the exact feature attribution — no SHAP/LIME needed.
 # ============================================================================
 
 class GlacierLatentMoEScorer:
@@ -2914,11 +2849,7 @@ class GlacierLatentMoEScorer:
     def _arrhenius_expert(p: str, v_si: float,
                           temp_c: Optional[float],
                           ext: Dict[str, Any]) -> float:
-        """Thread B — Arrhenius consistency between T and A or Q.
-
-        A candidate is rewarded when its temperature and its value fall
-        on the same side of the -10 °C transition (canonical T*).
-        """
+        """Thread B — Arrhenius consistency between T and A or Q."""
         if p not in ("rate_factor_A1", "rate_factor_A2",
                      "activation_energy_Q1", "activation_energy_Q2"):
             return 0.5
@@ -2927,7 +2858,6 @@ class GlacierLatentMoEScorer:
         cold = temp_c <= -10.0
         warm = temp_c >= -5.0
         if p == "rate_factor_A1":
-            # A1 is the cold value; punish when the ice is clearly warm
             return 0.95 if cold else (0.35 if warm else 0.60)
         if p == "rate_factor_A2":
             return 0.95 if warm else (0.35 if cold else 0.60)
@@ -2992,7 +2922,6 @@ class GlacierLatentMoEScorer:
                 v = float(ext["value"])
             except (TypeError, ValueError):
                 continue
-            # Use the current n for A conversion if available; else 3.0
             n_for_conv = 3.0
             if p in ("rate_factor_A1", "rate_factor_A2"):
                 for cand in extractions:
@@ -3011,7 +2940,6 @@ class GlacierLatentMoEScorer:
                 continue
             v_si_clamped, was_clamped = _glacier_clamp(v_si, p)
 
-            # Normalise ext temp to °C if it looks like K
             ext_temp = ext.get("temp")
             if ext_temp is not None:
                 try:
@@ -3081,7 +3009,7 @@ class GlacierLatentMoEScorer:
 
 
 # ============================================================================
-# ███ SECTION 23 — THREE-TIER CASCADE                                    ███
+# ███ SECTION 23 — THREE-TIER CASCADE (URL-threaded)                     ███
 # ============================================================================
 
 def recommend_param_values(
@@ -3092,7 +3020,8 @@ def recommend_param_values(
     fabric: Optional[str] = None,
     k: int = 6,
     use_llm: bool = True,
-    ollama_model: str = "qwen2.5:7b",
+    ollama_model: str = DEFAULT_OLLAMA_MODEL,
+    ollama_url: str = DEFAULT_OLLAMA_URL,
     retriever: Optional[HybridRetriever] = None,
     allow_prior_inference: bool = True,
     cascade_mode: str = 'union',
@@ -3108,13 +3037,16 @@ def recommend_param_values(
     cascade_mode='union'    all viable tiers run; non-incumbent routes
                             are tagged `_context=True`.
     cascade_mode='fallback' short-circuit; first successful tier wins.
+
+    `ollama_url` selects the Ollama daemon (may be a remote host).
     """
     if retriever is None:
         retriever = get_retriever()
 
     diag: Dict[str, Any] = dict(
         param=param_key, records=0, n_llm=0, n_heuristic=0, n_prior=0,
-        tier="none", reason="", cascade_mode=cascade_mode)
+        tier="none", reason="", cascade_mode=cascade_mode,
+        ollama_url=ollama_url, ollama_model=ollama_model)
 
     records = retriever.search(param_key, material, k=k)
     if not records:
@@ -3124,12 +3056,13 @@ def recommend_param_values(
 
     cands: List[ValueCandidate] = []
 
-    # ── Tier 1 ──────────────────────────────────────────────────────
+    # ── Tier 1 — grounded LLM extraction ────────────────────────────
     t1 = len(cands)
     if use_llm and records:
         try:
             prompt = build_extraction_prompt(param_key, material, records)
-            raw = ollama_extract(prompt, model=ollama_model)
+            raw = ollama_extract(prompt, model=ollama_model,
+                                 host=ollama_url)
             items = parse_llm_json(raw)
             for it in items:
                 if isinstance(it, dict):
@@ -3143,7 +3076,7 @@ def recommend_param_values(
             logger.warning("Tier-1 LLM failed (%s): %s", param_key, e)
     diag["n_llm"] = len(cands) - t1
 
-    # ── Tier 2 ──────────────────────────────────────────────────────
+    # ── Tier 2 — deterministic regex NER ────────────────────────────
     t2 = len(cands)
     if records and (cascade_mode == 'union' or not cands):
         hits = heuristic_extract(records, param_key)
@@ -3155,13 +3088,14 @@ def recommend_param_values(
                               glen_n_for_conversion=glen_n_for_conversion))
     diag["n_heuristic"] = len(cands) - t2
 
-    # ── Tier 3 ──────────────────────────────────────────────────────
+    # ── Tier 3 — LLM prior inference ────────────────────────────────
     t3 = len(cands)
     if use_llm and allow_prior_inference and \
             (cascade_mode == 'union' or not cands):
         try:
             prompt = build_prior_inference_prompt(param_key, material, records)
-            raw = ollama_extract(prompt, model=ollama_model)
+            raw = ollama_extract(prompt, model=ollama_model,
+                                 host=ollama_url)
             items = parse_llm_json(raw)
             for it in items:
                 if isinstance(it, dict):
@@ -3176,7 +3110,7 @@ def recommend_param_values(
             logger.warning("Tier-3 prior failed (%s): %s", param_key, e)
     diag["n_prior"] = len(cands) - t3
 
-    # ── Tier 3b: regime classifier ──────────────────────────────────
+    # ── Tier 3b — regime classifier ─────────────────────────────────
     if cascade_mode == 'union' or not cands:
         try:
             if param_key == "glen_n":
@@ -3226,16 +3160,7 @@ def recommend_param_values(
 # ============================================================================
 
 def generate_glacier_sif(p: Dict[str, Any]) -> str:
-    """Generate a complete Elmer SIF for a 3D glacier Stokes solve.
-
-    Uses pre-deformed mesh.nodes verbatim (no `Surface` / `include`
-    directive), so Elmer consumes the mesh as-is.
-
-    CRITICAL: `Density` and `Flow BodyForce 3` are Elmer expressions
-    beginning with `$`, so the leading `$` is INTENTIONALLY preserved in
-    the template (this is Elmer syntax — see ElmerSolver docs §"Real
-    valued parameters with expressions").
-    """
+    """Generate a complete Elmer SIF for a 3D glacier Stokes solve."""
     return f"""! ──────────────────────────────────────────────────────────────────
 ! Auto-generated by Glacier Intelligent ElmerSolver Recommender
 ! Generated at: {datetime.now().isoformat()}
@@ -3325,7 +3250,6 @@ End
 
 ! ──────────────────────────────────────────────────────────────────
 ! Material — Glen flow law with two Arrhenius regimes
-! Density is a $-expression: SI kg/m³ × (year_s)^-2
 ! ──────────────────────────────────────────────────────────────────
 Material 1
   Name = "{p['material_name']}"
@@ -3385,8 +3309,6 @@ End
 # ============================================================================
 
 class JournalTemplates:
-    """Journal-specific matplotlib rcParams presets."""
-
     @staticmethod
     def get_journal_styles() -> Dict[str, Dict[str, Any]]:
         return {
@@ -3860,15 +3782,7 @@ def plot_stacked_latentmoe(candidates: List[GlacierCandidate],
                            fig_size: Tuple[float, float] = (6.5, 4.0),
                            max_headroom: float = 1.18,
                            show_context: bool = False):
-    """Exact XAI stacked bar chart — bar height = total MoE score; each
-    coloured segment = one expert's exact weighted contribution.
-
-    Because the MoE is deterministic and linear, this IS the exact
-    feature attribution — no SHAP/LIME needed.
-
-    v10.1.1: when `show_context=True`, non-incumbent candidates are
-    included (greyed overlay); the pinned winner is marked by a thin
-    orange underline (NO '⭐ BEST' icon)."""
+    """Exact XAI stacked bar chart — bar height = total MoE score."""
     n = len(candidates)
     if n == 0:
         return None
@@ -3987,21 +3901,11 @@ def _fig_to_bytes_plotly(fig, fmt: str = "png",
 # ============================================================================
 # ███ SECTION 31 — PHYSICS LAB: ARRHENIUS                                ███
 # ============================================================================
-# The Arrhenius Lab synthesises the temperature-dependent rate factor
-# A(T) from the user's current cold/warm parameters and displays the
-# sensitivity to T* and Q1/Q2.
-# ============================================================================
 
 def arrhenius_rate_factor(T_c: float, A1: float, A2: float,
                           Q1: float, Q2: float, T_star_c: float,
                           R: float = R_GAS) -> float:
-    """Return A(T) in the same units as A1/A2 (MPa^-n yr^-1).
-
-    Below T*: A(T) = A1 · exp[−Q1/R (1/T − 1/T*)]
-    Above T*: A(T) = A2 · exp[−Q2/R (1/T − 1/T*)]
-
-    T is in Kelvin internally.
-    """
+    """Return A(T) in the same units as A1/A2 (MPa^-n yr^-1)."""
     T_K = T_c + T0_CELSIUS
     T_star_K = T_star_c + T0_CELSIUS
     if T_K <= 0 or T_star_K <= 0:
@@ -4024,7 +3928,6 @@ def render_arrhenius_lab():
     if bundle is None:
         st.info('Run the AI recommender in the sidebar first, then come '
                 'back to this lab.  Meanwhile, defaults are shown.')
-        # Fall back to defaults so the lab is interactive before Analyse.
         A1 = GLACIER_ONTOLOGY['rate_factor_A1']['defaults']['ice']
         A2 = GLACIER_ONTOLOGY['rate_factor_A2']['defaults']['ice']
         Q1 = GLACIER_ONTOLOGY['activation_energy_Q1']['defaults']['ice']
@@ -4071,7 +3974,6 @@ def render_arrhenius_lab():
     ax.semilogy(Ts, As, color='#0072B2', linewidth=1.5)
     ax.axvline(T_star_show, color='#D55E00', linewidth=1.0,
                linestyle='--', label=f'T* = {T_star_show:.1f} °C')
-    # annotate cold/warm sides
     ax.text(T_star_show - 2, As.max() * 0.5, 'cold', ha='right',
             fontsize=8, color='#0072B2')
     ax.text(T_star_show + 2, As.max() * 0.5, 'warm', ha='left',
@@ -4101,19 +4003,10 @@ def render_arrhenius_lab():
 # ============================================================================
 # ███ SECTION 32 — PHYSICS LAB: GLEN FLOW-LAW                            ███
 # ============================================================================
-# The Glen Lab synthesises the effective viscosity from the full flow law
-# ν_eff = (2 A E)^(−1/n) · ε̇^(1/n − 1) and lets the user sweep strain
-# rate and temperature.
-# ============================================================================
 
 def glen_effective_viscosity(strain_rate: float, A_val: float,
                              n_val: float, E_val: float = 1.0
                              ) -> float:
-    """Effective viscosity ν_eff = (2 A E)^(−1/n) · ε̇^(1/n − 1).
-
-    Returns a value in MPa·yr (if A is in MPa^-n yr^-1 and strain rate in
-    yr^-1), or SI units if the inputs are SI.  The formula is invariant.
-    """
     if strain_rate <= 0 or A_val <= 0 or n_val <= 0 or E_val <= 0:
         return float("nan")
     pre = (2.0 * A_val * E_val) ** (-1.0 / n_val)
@@ -4179,18 +4072,9 @@ def render_glen_flow_law_lab():
 # ============================================================================
 # ███ SECTION 33 — PHYSICS LAB: ENHANCEMENT                              ███
 # ============================================================================
-# Enhancement / fabric lab correlates E with c-axis fabric strength via
-# the empirical relation from Lliboutry / Thorsteinsson.
-# ============================================================================
 
 def enhancement_from_fabric(fabric_strength: float) -> float:
-    """Empirical E(fabric_strength) after Lliboutry 1993.
-
-    fabric_strength ∈ [0, 1] is the single-maximum pole-figure strength
-    (0 = random, 1 = perfect single-max).
-    """
     fs = float(np.clip(fabric_strength, 0.0, 1.0))
-    # E ≈ 1 + 4 fs² + 0.5 fs⁴  (interpolates random→E=1, perfect→E≈5.5)
     return 1.0 + 4.0 * fs ** 2 + 0.5 * fs ** 4
 
 
@@ -4238,21 +4122,15 @@ def render_enhancement_lab():
 # ============================================================================
 # ███ SECTION 34 — PHYSICS LAB: BASAL / DRIVING STRESS                   ███
 # ============================================================================
-# Driving stress lab: τ_b = ρ g H sin(α)  and the Glen-inverted
-# strain rate from the user's current parameters.
-# ============================================================================
 
 def basal_driving_stress(rho: float, g: float, H: float,
                          alpha_deg: float) -> float:
-    """Basal driving stress τ_b = ρ g H sin(α) in Pa."""
     alpha_rad = math.radians(alpha_deg)
     return rho * g * H * math.sin(alpha_rad)
 
 
 def glen_strain_rate(tau_pa: float, A_val: float, n_val: float,
                      E_val: float = 1.0) -> float:
-    """Glen strain rate ε̇ = A · E · τ^n (τ in Pa; A in MPa^-n yr^-1 must
-    be converted to Pa^-n yr^-1 first)."""
     tau_mpa = tau_pa / PA_PER_MPA
     return A_val * E_val * (tau_mpa ** n_val)
 
@@ -4305,12 +4183,11 @@ def render_basal_stress_lab():
 
 
 # ============================================================================
-# ███ SECTION 35 — RECOMMENDER ORCHESTRATOR                               ███
+# ███ SECTION 35 — RECOMMENDER ORCHESTRATOR (URL-threaded)                ███
 # ============================================================================
 
 @dataclass
 class GlacierRecommendationBundle:
-    """All outputs of a recommender run."""
     material: str
     temp_c: Optional[float]
     stress_regime: Optional[str]
@@ -4344,18 +4221,26 @@ class GlacierRecommendationBundle:
 
 
 class GlacierRecommender:
-    """Orchestrates the full three-tier cascade across every parameter."""
+    """Orchestrates the full three-tier cascade across every parameter.
+
+    v10.1.1-glacier-full: `ollama_url` is a first-class constructor
+    argument so the recommender can target a remote Ollama server.
+    """
 
     def __init__(self, db_dir: str = "json_metadatabase",
-                 ollama_model: str = "qwen2.5:7b",
+                 ollama_model: str = DEFAULT_OLLAMA_MODEL,
+                 ollama_url: str = DEFAULT_OLLAMA_URL,
                  use_llm: bool = True,
                  debug_llm: bool = False,
                  use_grounded: bool = True,
                  allow_prior_inference: bool = True,
                  cascade_mode: str = 'union'):
         self.db_dir = db_dir
-        self.client = GlacierOllamaClient(model=ollama_model)
-        self.llm_available = use_llm and GlacierOllamaClient.is_available()
+        self.ollama_url = (ollama_url or DEFAULT_OLLAMA_URL).rstrip("/")
+        self.client = GlacierOllamaClient(url=self.ollama_url,
+                                          model=ollama_model)
+        self.llm_available = (use_llm
+                              and GlacierOllamaClient.is_available(self.ollama_url))
         self.hybrid: Optional[HybridRetriever] = None
         if use_grounded:
             try:
@@ -4395,6 +4280,7 @@ class GlacierRecommender:
                 stress_regime=stress_regime, fabric=fabric,
                 use_llm=self.llm_available,
                 ollama_model=self.client.model,
+                ollama_url=self.ollama_url,
                 retriever=self.hybrid,
                 allow_prior_inference=self.allow_prior_inference,
                 cascade_mode=self.cascade_mode)
@@ -4427,7 +4313,6 @@ class GlacierRecommender:
                     "_context": bool(getattr(c, "context", False)),
                 })
 
-        # Inject context parameter defaults (density/gravity/shear rate)
         for param in CONTEXT_PARAM_ORDER:
             if not any(e["param"] == param for e in extractions):
                 default_val = GLACIER_ONTOLOGY[param]["defaults"].get(
@@ -4475,8 +4360,6 @@ class GlacierRecommender:
 def build_sif_params_from_bundle(bundle: Optional[GlacierRecommendationBundle],
                                  overrides: Dict[str, Any],
                                  ctx: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge recommender bundle + UI overrides + parsed SIF context into
-    the parameter dict consumed by `generate_glacier_sif`."""
     def _pick(param, fallback):
         if param in overrides:
             return overrides[param]
@@ -4499,11 +4382,6 @@ def build_sif_params_from_bundle(bundle: Optional[GlacierRecommendationBundle],
     rho = _pick('ice_density', 917.0)
     g = _pick('gravity', 9.81)
 
-    # Density expression: Elmer expects an expression in the SIF unit
-    # system.  The recommender gives SI kg/m³.  The Elmer SIF uses a
-    # year-based time unit, so ρ_Elmer = ρ_SI × (1 yr)^-2 × ... i.e. we
-    # apply the year-to-second conversion in the expression to keep
-    # units coherent.
     density_expr = f"{rho:.2f} * (1.0E-06) * ({SECONDS_PER_YEAR:.6e})^(-2.0)"
     gravity_expr = f"-{g:.4f} * ({SECONDS_PER_YEAR:.6e})^(2.0)"
 
@@ -4538,7 +4416,7 @@ def build_sif_params_from_bundle(bundle: Optional[GlacierRecommendationBundle],
 
 
 # ============================================================================
-# ███ SECTION 37 — SIDEBAR RECOMMENDER UI                                ███
+# ███ SECTION 37 — SIDEBAR RECOMMENDER UI (URL + tiered model dropdown)  ███
 # ============================================================================
 
 _PLR = "gl_rec_"
@@ -4562,6 +4440,9 @@ def _plr_reset():
     st.session_state.pop("glacier_overrides", None)
     st.session_state.pop("glacier_recommender_bundle", None)
     st.session_state.pop("_glacier_live_recommender", None)
+    for k in list(st.session_state.keys()):
+        if isinstance(k, str) and k.startswith("_ollama_probe_cache::"):
+            st.session_state.pop(k, None)
 
 
 def _plr_render_parameter_selector(
@@ -4666,7 +4547,8 @@ def render_recommender_sidebar(default_material: str = "ice",
                                default_temp_c: float = -10.0,
                                default_stress: str = "high",
                                default_fabric: str = "isotropic",
-                               ollama_model: str = "qwen2.5:7b"):
+                               ollama_model: str = DEFAULT_OLLAMA_MODEL,
+                               ollama_url: str = DEFAULT_OLLAMA_URL):
     st.subheader("🤖 Glacier Intelligent Recommender v10.1.1")
     st.caption(
         "**10-expert Latent MoE** · **union cascade + pin-list** · "
@@ -4677,7 +4559,8 @@ def render_recommender_sidebar(default_material: str = "ice",
         material = st.text_input("Target material", value=default_material,
                                  key=f"{_PLR}material")
     with col2:
-        temp_c = st.number_input("Ice temperature (°C)", value=float(default_temp_c),
+        temp_c = st.number_input("Ice temperature (°C)",
+                                 value=float(default_temp_c),
                                  min_value=-60.0, max_value=1.0, step=1.0,
                                  key=f"{_PLR}temp")
 
@@ -4706,7 +4589,7 @@ def render_recommender_sidebar(default_material: str = "ice",
     else:
         _fabric_arg = "anisotropic"
 
-    # Regime previews
+    # ── Live regime previews ────────────────────────────────────────
     st.markdown('#### 🧭 Live regime preview')
     g_n = classify_glen_n_regime(_stress_arg, temp_c, _fabric_arg)
     r_A = classify_rate_factor_regime(temp_c, _fabric_arg)
@@ -4725,16 +4608,116 @@ def render_recommender_sidebar(default_material: str = "ice",
                f"range [{e_reg['low']:.2f}, {e_reg['high']:.2f}] · "
                f"center {e_reg['inferred']:.2f}")
 
-    # LLM model selection
-    _models = ["(disable LLM)"] + GlacierOllamaClient.list_models() or \
-              ["(disable LLM)", "qwen2.5:7b", "qwen2.5:14b", "llama3.1:8b",
-               "mistral:7b", "gemma2:9b"]
-    sel_model = st.selectbox("Ollama model", _models, index=0,
-                             key=f"{_PLR}ollama_sel")
-    _llm_avail = (GlacierOllamaClient.is_available()
-                  if sel_model != "(disable LLM)" else False)
-    st.caption(f"{'✅' if _llm_avail else '⚠️'} Ollama "
-               f"{'available' if _llm_avail else 'unreachable / disabled'}")
+    # ═══════════════════════════════════════════════════════════════════
+    # ███ LLM configuration block (FIXED + EXPANDED)                 ███
+    # ═══════════════════════════════════════════════════════════════════
+    st.markdown('#### 🦙 Ollama LLM configuration')
+
+    _current_url = st.session_state.get(f"{_PLR}ollama_url",
+                                        ollama_url or DEFAULT_OLLAMA_URL)
+    url_input = st.text_input(
+        "Ollama server URL",
+        value=_current_url,
+        key=f"{_PLR}ollama_url_widget",
+        help="Examples: http://localhost:11434 (local) · "
+             "http://192.168.1.10:11434 (LAN) · "
+             "https://ollama.example.com (remote).",
+    )
+    st.session_state[f"{_PLR}ollama_url"] = url_input
+
+    tb_col1, tb_col2 = st.columns(2)
+    with tb_col1:
+        if st.button("🔌 Test connection", use_container_width=True,
+                     key=f"{_PLR}test_url"):
+            probe = GlacierOllamaClient.probe(url_input)
+            st.session_state[f"_ollama_probe_cache::{url_input}"] = probe
+            if probe["reachable"]:
+                st.success(
+                    f"✅ Reachable · {probe['model_count']} model(s) "
+                    f"installed.")
+            else:
+                st.error(
+                    f"❌ Unreachable: {probe.get('error') or 'no response'}")
+    with tb_col2:
+        if st.button("🔄 Refresh models", use_container_width=True,
+                     key=f"{_PLR}refresh_models"):
+            st.session_state.pop(f"_ollama_probe_cache::{url_input}", None)
+            st.rerun()
+
+    _options, _status = build_ollama_model_options(url_input,
+                                                   force_refresh=False)
+    _labels = list(_options.keys())
+
+    _installed = _status.get("installed", []) or []
+    _pref_model = ollama_model or DEFAULT_OLLAMA_MODEL
+    if _pref_model in _installed:
+        _default_label = next(
+            (lbl for lbl, tag in _options.items()
+             if tag == _pref_model and lbl.startswith("✅")),
+            _labels[0])
+    elif _installed:
+        _default_label = next(
+            (lbl for lbl, tag in _options.items()
+             if tag == _installed[0] and lbl.startswith("✅")),
+            _labels[0])
+    elif DEFAULT_OLLAMA_MODEL in _options.values():
+        _default_label = next(
+            (lbl for lbl, tag in _options.items()
+             if tag == DEFAULT_OLLAMA_MODEL and lbl.startswith("🦙")),
+            _labels[0])
+    else:
+        _default_label = _labels[0]
+
+    _default_idx = (_labels.index(_default_label)
+                    if _default_label in _labels else 0)
+
+    _sel_label = st.selectbox("Ollama model", _labels,
+                              index=_default_idx,
+                              key=f"{_PLR}ollama_sel")
+    _sel_tag = _options.get(_sel_label, "")
+
+    if _sel_tag == "__custom__":
+        custom_name = st.text_input(
+            "Custom model name (must be installed on the server)",
+            value=st.session_state.get(f"{_PLR}custom_model",
+                                       DEFAULT_OLLAMA_MODEL),
+            key=f"{_PLR}custom_model_input")
+        st.session_state[f"{_PLR}custom_model"] = custom_name.strip()
+        _sel_tag = custom_name.strip()
+        if _sel_tag and _sel_tag not in _installed:
+            st.warning(
+                f"⚠️ `{_sel_tag}` is not in the installed list. "
+                f"Run `ollama pull {_sel_tag}` on the server first.")
+    elif _sel_tag == "":
+        st.caption("⚡ LLM disabled — the cascade will fall back to "
+                   "regex-only extraction.")
+    elif _sel_tag not in _installed and _installed:
+        st.info(
+            f"ℹ️ `{_sel_tag}` isn't installed yet on `{url_input}`.  "
+            f"The recommender will attempt the request anyway; if Ollama "
+            f"returns 404, run `ollama pull {_sel_tag}` on the server.")
+
+    _llm_avail = (_sel_tag != "" and
+                  _status.get("reachable", False))
+    _status_icon = "✅" if _llm_avail else "⚠️"
+    _status_text = ("available" if _llm_avail
+                    else "unreachable" if _sel_tag
+                    else "disabled")
+    _model_count = _status.get("model_count", 0)
+    st.caption(
+        f"{_status_icon} `{url_input}` · "
+        f"{'reachable' if _status.get('reachable') else 'unreachable'} · "
+        f"{_model_count} model(s) installed · "
+        f"active model: `{_sel_tag or '(none)'}` · {_status_text}")
+
+    if _status.get("error"):
+        st.caption(f"↳ last error: `{_status['error']}`")
+
+    if _installed:
+        with st.expander(f"📦 Installed models ({len(_installed)})",
+                         expanded=False):
+            for m in _installed:
+                st.code(m, language="text")
 
     use_grounded = st.checkbox("🧭 Use grounded NER pipeline", value=True,
                                key=f"{_PLR}use_grounded")
@@ -4768,15 +4751,24 @@ def render_recommender_sidebar(default_material: str = "ice",
     if refresh_btn:
         try:
             st.cache_resource.clear()
+            st.session_state.pop(f"_ollama_probe_cache::{url_input}", None)
             st.success("Cache purged. Next Analyse runs fresh.")
         except Exception as e:
             st.warning(f"Purge failed: {e}")
 
     if run_btn:
+        _resolved_model = _sel_tag if _sel_tag else DEFAULT_OLLAMA_MODEL
+        _use_llm = bool(_sel_tag) and _llm_avail
+
+        if _sel_tag and not _status.get("reachable"):
+            st.warning(
+                "Ollama server unreachable — falling back to regex-only "
+                "extraction.  Recommendation quality will be reduced.")
+
         recommender = GlacierRecommender(
-            ollama_model=(sel_model if sel_model != "(disable LLM)"
-                          else "qwen2.5:7b"),
-            use_llm=(sel_model != "(disable LLM)" and _llm_avail),
+            ollama_model=_resolved_model,
+            ollama_url=url_input,
+            use_llm=_use_llm,
             debug_llm=debug_llm,
             use_grounded=use_grounded,
             allow_prior_inference=allow_prior,
@@ -4809,6 +4801,7 @@ def render_recommender_sidebar(default_material: str = "ice",
                 f"candidates ({n_ctx} context) · "
                 f"backend `{bundle.retrieval_backend}` · "
                 f"LLM {'yes' if bundle.llm_used else 'no'} · "
+                f"model `{_resolved_model}` · "
                 f"mode `{cascade_mode}` · "
                 f"coverage {bundle.coverage_five()}/5")
         except Exception as e:
@@ -4870,7 +4863,7 @@ def main():
     </style>
     """, unsafe_allow_html=True)
     st.markdown('<h1 class="main-header">🏔️ Glacier Intelligent '
-                'ElmerSolver Recommender (v10.1.1-glacier)</h1>',
+                'ElmerSolver Recommender (v10.1.1-glacier-full)</h1>',
                 unsafe_allow_html=True)
     st.markdown("""
     <div style="background-color: #F0F9FF; padding: 1.5rem;
@@ -4893,6 +4886,10 @@ def main():
       interactive physics exploration on top of the recommendation.<br>
     • <span style="color: green;">📄 SIF GENERATOR + ElmerSolver RUNNER:</span>
       write SIF → subprocess → live log.<br>
+    • <span style="color: green;">🦙 OLLAMA ENHANCED (full):</span>
+      user-editable URL · 3-tier dropdown (✅ installed · ⬇️ pull needed ·
+      ✏️ custom) · live probe · 21 curated presets · URL threaded through
+      every cascade.<br>
     </div>
     """, unsafe_allow_html=True)
 
@@ -4944,9 +4941,9 @@ def main():
                 default_temp_c=-10.0,
                 default_stress="high",
                 default_fabric="isotropic",
-                ollama_model="qwen2.5:7b")
+                ollama_model=DEFAULT_OLLAMA_MODEL,
+                ollama_url=DEFAULT_OLLAMA_URL)
 
-    # ── Main tabs ────────────────────────────────────────────────────
     tab_rec, tab_sif, tab_run, tab_arr, tab_glen, tab_enh, tab_tau, \
         tab_vis, tab_diag = st.tabs([
             "🤖 Recommender",
@@ -5167,7 +5164,6 @@ def main():
             elif chart_type == "Radar":
                 categories = [GLACIER_ONTOLOGY[p]["symbol"]
                               for p in ALL_PARAMS]
-                # Normalise to soft_range
                 def _norm(p, v):
                     lo, hi = GLACIER_ONTOLOGY[p]["soft_range"]
                     if p in ("rate_factor_A1", "rate_factor_A2",
@@ -5314,12 +5310,8 @@ def main():
 # ============================================================================
 # ███ SECTION 39 — REGRESSION TEST SUITE                                 ███
 # ============================================================================
-# Gated behind GLACIER_REGRESSION=1 so module-level code re-execution on
-# every Streamlit widget interaction doesn't run the suite repeatedly.
-# ============================================================================
 
 def _regression_test_v881() -> None:
-    """Retriever + heuristic round-trip."""
     corpus = {"glacier.json": [
         {"material": "ice", "quantity": "glen exponent n",
          "value": 3.0, "unit": "dimensionless", "method": "creep test"},
@@ -5337,7 +5329,6 @@ def _regression_test_v881() -> None:
 
 
 def _regression_test_v882() -> None:
-    """Sci-notation scanner + confidence cap."""
     scan_text = "A1 = 3.5e-25 Pa^-3 s^-1 and rate factor 2.4×10^-24 Pa^-3 s^-1"
     hits = list(_NUM_ANY.finditer(scan_text))
     assert any(abs(_num_value(m) - 3.5e-25) < 1e-30 for m in hits)
@@ -5351,7 +5342,6 @@ def _regression_test_v882() -> None:
 
 
 def _regression_test_v883() -> None:
-    """Provenance taxonomy completeness."""
     for fine in FINE_PROVENANCE_KEYS:
         assert _legend_key(fine, 'coarse') in LEGEND_MARKERS
         assert _legend_key(fine) in COARSE_PROVENANCE_KEYS
@@ -5364,22 +5354,18 @@ def _regression_test_v883() -> None:
 
 
 def _regression_test_v884() -> None:
-    """Dataclass field ordering invariants."""
     import dataclasses as _dc
     names = [f.name for f in _dc.fields(GlacierCandidate)]
     for required in ("moe_breakdown", "context", "provenance",
                      "regime_tag", "reasoning"):
         assert required in names, f"GlacierCandidate missing {required!r}"
 
-    # ValueCandidate must have `regime_tag` before `context`
     vc_names = [f.name for f in _dc.fields(ValueCandidate)]
     assert vc_names.index("regime_tag") < vc_names.index("context")
     logger.info("v8.8.4 regression test: PASS")
 
 
 def _regression_test_v890() -> None:
-    """Side-note parser must reject non-positive values; regimes must be
-    ordered correctly; the MoE must prefer in-regime to out-of-regime."""
     bad_table = (
         "| Field | Value |\n"
         "| Rate factor | 0.000 |\n"
@@ -5403,7 +5389,6 @@ def _regression_test_v890() -> None:
 
 
 def _regression_test_v90() -> None:
-    """Regime classifier monotonicity."""
     r_small = classify_rate_factor_regime("cold", "isotropic")
     r_warm = classify_rate_factor_regime("temperate", "isotropic")
     assert r_warm["bench"] > r_small["bench"], \
@@ -5420,17 +5405,14 @@ def _regression_test_v90() -> None:
 
 
 def _regression_test_v91() -> None:
-    """Arrhenius coupling: A(T) must be continuous at T*."""
     A1 = 1.14e-5; A2 = 6.046e28
     Q1 = 60000.0; Q2 = 139000.0
     T_star = -10.0
     A_cold_side = arrhenius_rate_factor(T_star - 1e-3, A1, A2, Q1, Q2, T_star)
     A_warm_side = arrhenius_rate_factor(T_star + 1e-3, A1, A2, Q1, Q2, T_star)
-    # Both must be within a factor of ~1.001 of the crossover value
     ratio = max(A_cold_side, A_warm_side) / min(A_cold_side, A_warm_side)
     assert ratio < 1.01, f"A(T) discontinuous at T*: ratio {ratio}"
 
-    # Temperature monotonicity: A increases with T
     A_cold = arrhenius_rate_factor(-40.0, A1, A2, Q1, Q2, T_star)
     A_warm = arrhenius_rate_factor(-1.0, A1, A2, Q1, Q2, T_star)
     assert A_warm > A_cold, "A(T) should increase with temperature"
@@ -5438,7 +5420,6 @@ def _regression_test_v91() -> None:
 
 
 def _regression_test_v92() -> None:
-    """3-bucket rollup: total, exhaustive, ≤ 3 coarse entries."""
     for fine in FINE_PROVENANCE_KEYS:
         assert _legend_key(fine, 'coarse') in LEGEND_MARKERS
         assert _legend_key(fine) in COARSE_PROVENANCE_KEYS
@@ -5462,7 +5443,6 @@ def _regression_test_v92() -> None:
 
 
 def _regression_test_v921() -> None:
-    """Ordering: physics_inferred > regime > prior > reasoned > regex."""
     for s in ('glacier_regime_prior', 'regime_prior_fallback',
               'arrhenius_regime_prior', 'fabric_regime'):
         assert _norm_provenance(s) == 'regime_prior', s
@@ -5474,7 +5454,6 @@ def _regression_test_v921() -> None:
 
 
 def _regression_test_v922() -> None:
-    """The `_provenance` tag passes through `gatekeep` cleanly."""
     fake = [{"value": 3.0, "unit": "dimensionless", "confidence": 0.9,
              "property_label": "glen exponent", "source": "test",
              "_context": True}]
@@ -5489,7 +5468,6 @@ def _regression_test_v922() -> None:
 
 
 def _regression_test_v930() -> None:
-    """Union cascade invariants: pin-list, context flags."""
     for param, buckets in INCUMBENT_ROUTES.items():
         for b in buckets:
             assert b in COARSE_PROVENANCE_KEYS, \
@@ -5529,7 +5507,6 @@ def _regression_test_v930() -> None:
 
 
 def _regression_test_v931() -> None:
-    """Honest naming + audit toggle semantics."""
     assert 'physics_inferred' in FINE_PROVENANCE_KEYS
     assert 'derived' not in FINE_PROVENANCE_KEYS
     assert 'physics_inferred' in PROVENANCE_GROUPS['deterministic']
@@ -5543,7 +5520,6 @@ def _regression_test_v931() -> None:
 
 
 def _regression_test_v10() -> None:
-    """v10 MoE invariants: weights sum to 1.00; experts have colors."""
     sc = GlacierLatentMoEScorer()
     w_sum = (sc.w_material + sc.w_thermal + sc.w_strain + sc.w_method
              + sc.w_confidence + sc.w_reasoning + sc.w_regime
@@ -5557,16 +5533,12 @@ def _regression_test_v10() -> None:
 
 
 def _regression_test_v1011() -> None:
-    """v10.1.1 fixes: routes non-context, no '⭐ BEST', opt-in Best match."""
-    # 1. σ₀-equivalent physics_inferred must be the incumbent for all
-    #    deterministic pinned params
     for param in ('glen_n', 'rate_factor_A1', 'activation_energy_Q1',
                   'glen_enhancement', 'critical_shear_rate',
                   'ice_density', 'gravity'):
         assert _is_context(param, 'physics_inferred') is False, \
             f"{param}: physics_inferred must be non-context"
 
-    # 2. Stacked chart contains no '⭐ BEST'
     sc = GlacierLatentMoEScorer()
     b = sc.score(
         [{"param": "glen_n", "value": 3.0, "unit": "dimensionless",
@@ -5585,7 +5557,6 @@ def _regression_test_v1011() -> None:
         f"stacked chart still has '⭐ BEST': {all_text}"
     plt.close(fig)
 
-    # 3. 'Best match' legend entry is opt-in
     fig = plot_candidate_scores(
         [1.0, 2.0, 3.0], [0.8, 0.9, 0.7],
         ['regex_ner', 'physics_inferred', 'llm_prior'],
@@ -5608,8 +5579,28 @@ def _regression_test_v1011() -> None:
     logger.info("✅ _regression_test_v1011 passed")
 
 
+def _regression_test_ollama() -> None:
+    """Ollama client + dropdown option builder invariants (no network)."""
+    # Presets must be unique-tagged
+    tags = list(OLLAMA_MODEL_PRESETS.values())
+    assert len(tags) == len(set(tags)), "duplicate preset model tags"
+    # Default model must be one of the presets
+    assert DEFAULT_OLLAMA_MODEL in tags, \
+        "DEFAULT_OLLAMA_MODEL must be in OLLAMA_MODEL_PRESETS"
+    # Client always normalises a blank URL to localhost
+    c = GlacierOllamaClient(url="")
+    assert c.url == DEFAULT_OLLAMA_URL, f"blank URL not normalised: {c.url}"
+    # Trailing slash stripped
+    c2 = GlacierOllamaClient(url="http://example.com:11434/")
+    assert c2.url == "http://example.com:11434", f"trailing slash: {c2.url}"
+    # probe() never raises when requests is missing
+    if not REQUESTS_AVAILABLE:
+        s = GlacierOllamaClient.probe("http://127.0.0.1:1")
+        assert "error" in s and s["reachable"] is False
+    logger.info("✅ _regression_test_ollama passed")
+
+
 def _run_regression_suite() -> None:
-    """Run the whole battery; each test logs PASS/FAIL independently."""
     suite = [
         ('v8.8.1',  '_regression_test_v881'),
         ('v8.8.2',  '_regression_test_v882'),
@@ -5625,6 +5616,7 @@ def _run_regression_suite() -> None:
         ('v9.3.1',  '_regression_test_v931'),
         ('v10.0.0', '_regression_test_v10'),
         ('v10.1.1', '_regression_test_v1011'),
+        ('ollama',  '_regression_test_ollama'),
     ]
     for tag, name in suite:
         fn = globals().get(name)
