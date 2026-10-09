@@ -24,7 +24,7 @@
 # ============================================================================
 # QUICK-START
 #   1.  (optional)  ollama serve && ollama pull qwen2.5:7b
-#   2.  (optional)  mkdir glacier_metadatabase  &&  drop *.json there
+#   2.  (optional)  mkdir json_metadatabase  &&  drop *.json there
 #   3.  streamlit run glacier_elmer_ai.py
 #   4.  Sidebar → AI Recommender → Analyse.  Adopt.  SIF tab.  Run Elmer.
 #
@@ -34,7 +34,7 @@
 # WORKING DIRECTORY
 #   SIF is written to the sidebar "Working directory" and ElmerSolver is
 #   launched there.  Corpus is read from "Corpus folder" (default
-#   ./glacier_metadatabase).  SIF-context parsing reads an existing .sif
+#   ./json_metadatabase).  SIF-context parsing reads an existing .sif
 #   (optional) to seed the recommender with current n, A, Q, T*, E, ρ.
 # ============================================================================
 
@@ -2416,7 +2416,7 @@ class HybridRetriever:
 
 
 @st.cache_resource(show_spinner=False)
-def get_retriever(folder: str = "glacier_metadatabase",
+def get_retriever(folder: str = "json_metadatabase",
                   use_dense: bool = True) -> HybridRetriever:
     """Streamlit-cached hybrid retriever factory."""
     corpus = load_corpus_folder(folder)
@@ -4324,7 +4324,7 @@ class GlacierRecommendationBundle:
 class GlacierRecommender:
     """Orchestrates the full three-tier cascade across every parameter."""
 
-    def __init__(self, db_dir: str = "glacier_metadatabase",
+    def __init__(self, db_dir: str = "json_metadatabase",
                  ollama_model: str = "qwen2.5:7b",
                  use_llm: bool = True,
                  debug_llm: bool = False,
@@ -4888,7 +4888,7 @@ def main():
         st.markdown("---")
         st.header("📚 Corpus & LLM")
         corpus_dir = st.text_input(
-            "Corpus folder", value="glacier_metadatabase",
+            "Corpus folder", value="json_metadatabase",
             help="Directory containing JSON metadatabases.",
             key="side_corpus_dir")
 
