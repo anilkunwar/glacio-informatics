@@ -1375,7 +1375,7 @@ def recommend_glacier_params(
     material: str = 'ice',
     temp_c: float = -3.0,
     strain_rate: float = 0.1,
-    corpus_folder: str = 'glacier_json_metadatabase',
+    corpus_folder: str = ' json_metadatabase',
     use_llm: bool = True,
     ollama_model: str = 'qwen2.5:7b',
     cascade_mode: str = 'union',
@@ -1700,7 +1700,7 @@ def render_recommender_tab() -> None:
     with st.expander('📂 Corpus + LLM settings', expanded=False):
         corpus_folder = st.text_input(
             'Glacier metadatabase folder',
-            value='glacier_json_metadatabase', key='gr_corpus')
+            value=' json_metadatabase', key='gr_corpus')
         use_llm = st.checkbox('Use Ollama LLM (Tier 1 + Tier 3)',
                               value=True, key='gr_use_llm')
         ollama_model = st.text_input('Ollama model', value='qwen2.5:7b',
