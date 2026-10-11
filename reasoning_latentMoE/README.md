@@ -8,3 +8,5 @@
 
 [![continuummodelnt2d](https://img.shields.io/badge/icemechanics4-streamlit-green)](https:/stokes-flow3D-nlp4.streamlit.app/) (robust intelligence for the reasoning based understanding of four parameters, LLM model loading function available  enhanced model, exploration of json metadatabase)
 
+[![continuummodelnt2d](https://img.shields.io/badge/icemechanics5-streamlit-green)](https:/stokes-flow3D-nlp5.streamlit.app/) (physically realistic material properties, robust intelligence for the reasoning based understanding of four parameters, LLM model loading function available  enhanced model, exploration of json metadatabase)
+
