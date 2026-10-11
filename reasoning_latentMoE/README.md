@@ -8,7 +8,9 @@
 
 [![continuummodelnt2d](https://img.shields.io/badge/icemechanics4-streamlit-green)](https://stokes-flow3D-nlp4.streamlit.app/) (robust intelligence for the reasoning based understanding of four parameters, LLM model loading function available  enhanced model, exploration of json metadatabase)
 
-[![continuummodelnt2d](https://img.shields.io/badge/icemechanics5-streamlit-green)](https://stokes-flow3D-nlp5.streamlit.app/) (physically realistic material properties, robust intelligence for the reasoning based understanding of four parameters, LLM model loading function available  enhanced model, exploration of json metadatabase)
+[![continuummodelnt2d](https://img.shields.io/badge/icemechanics5-streamlit-green)](https://stokes-flow3D-nlp5.streamlit.app/) (4/5 quantities recommended, physically realistic material properties, robust intelligence for the reasoning based understanding of four parameters, LLM model loading function available  enhanced model, exploration of json metadatabase)
 
-[![continuummodelnt2d](https://img.shields.io/badge/icemechanics6-streamlit-green)](https://stokes-flow3D-nlp6.streamlit.app/) (physically realistic material properties, robust intelligence for the reasoning based understanding of four parameters, LLM model loading function available  enhanced model, exploration of json metadatabase)
+[![continuummodelnt2d](https://img.shields.io/badge/icemechanics6-streamlit-green)](https://stokes-flow3D-nlp6.streamlit.app/) (5/5 quantities recommended,still the temperature is recommended as -20 degree centigrade as cold ice, physically realistic material properties, robust intelligence for the reasoning based understanding of four parameters, LLM model loading function available  enhanced model, exploration of json metadatabase)
+
+[![continuummodelnt2d](https://img.shields.io/badge/icemechanics7-streamlit-green)](https://stokes-flow3D-nlp7.streamlit.app/) (5/5 quantities recommended,physically temperature is recommended using a physics-constrained gatekeeper, physically realistic material properties, robust intelligence for the reasoning based understanding of four parameters, LLM model loading function available  enhanced model, exploration of json metadatabase)
 
