@@ -680,13 +680,55 @@ if dat_files_found > 0 and mesh_found:
                 ),
             )
 
+            # ── Z-scale exaggeration (always available for 3D) ──
+            z_exaggeration = st.slider(
+                "Z-scale exaggeration",
+                min_value=0.1, max_value=20.0, value=1.0, step=0.1,
+                key="vis_z_exaggeration",
+                help=(
+                    "Multiply Z values by this factor to exaggerate vertical "
+                    "relief. 1.0 = true scale, >1 = stretched vertically, "
+                    "<1 = compressed."
+                ),
+            )
+
             if render_mode == "Continuous surface":
                 surface_layer = st.radio(
                     "Surface layer",
-                    options=["Top (glacier surface)", "Bottom (bedrock)", "Mid-depth"],
-                    index=0,
+                    options=[
+                        "Full geometry (top + bottom)",
+                        "Top (glacier surface)",
+                        "Bottom (bedrock)",
+                        "Mid-depth",
+                    ],
+                    index=0,          # ← default is now Full geometry
                     key="vis_surface_layer",
                 )
+
+                # ── Extra controls for Full geometry mode ──
+                if surface_layer.startswith("Full"):
+                    show_side_walls = st.checkbox(
+                        "Show side walls (close volume)",
+                        value=True,
+                        key="vis_show_side_walls",
+                        help="Render filled side panels connecting top and bottom surfaces.",
+                    )
+                    bedrock_cscale_name = st.selectbox(
+                        "Bedrock colorscale",
+                        options=COLORSCALES,
+                        index=COLORSCALES.index('Earth') if 'Earth' in COLORSCALES else 0,
+                        key="vis_bedrock_cscale",
+                        help="Colorscale used for the bottom (bedrock) surface.",
+                    )
+                    bedrock_cscale_reversed = st.checkbox(
+                        "Reverse bedrock colors", value=False,
+                        key="vis_bedrock_cscale_rev",
+                    )
+                else:
+                    show_side_walls = False
+                    bedrock_cscale_name = 'Earth'
+                    bedrock_cscale_reversed = False
+
                 interp_method = st.selectbox(
                     "Gap-fill interpolation",
                     options=["cubic", "linear", "nearest"] if _SCIPY_AVAILABLE else ["(scipy not installed)"],
@@ -705,6 +747,9 @@ if dat_files_found > 0 and mesh_found:
                 interp_method = "cubic"
                 show_wireframe = False
                 wireframe_width = 1
+                show_side_walls = False
+                bedrock_cscale_name = 'Earth'
+                bedrock_cscale_reversed = False
 
         with st.sidebar.expander("Figure Size", expanded=False):
             figure_height = st.slider("Figure height (px)", 400, 1400, 700, 50,
@@ -729,6 +774,10 @@ if dat_files_found > 0 and mesh_found:
             'show_wireframe': show_wireframe,
             'wireframe_width': wireframe_width,
             'figure_height': figure_height,
+            'z_exaggeration': z_exaggeration,
+            'show_side_walls': show_side_walls,
+            'bedrock_cscale': bedrock_cscale_name,
+            'bedrock_cscale_reversed': bedrock_cscale_reversed,
         }
 
     def make_2d_flowline_fig(surface, bedrock, vis,
@@ -830,11 +879,32 @@ if dat_files_found > 0 and mesh_found:
             vis['colormap'], vis['colormap_reversed']
         )
 
+        z_exag = vis.get('z_exaggeration', 1.0)
+
+        # ── Custom earth-tone colorscale for bedrock ──
+        EARTH_BROWN = [
+            [0.00, 'rgb(101, 67, 33)'],
+            [0.25, 'rgb(139, 90, 43)'],
+            [0.50, 'rgb(160, 120, 60)'],
+            [0.75, 'rgb(180, 150, 90)'],
+            [1.00, 'rgb(210, 180, 140)'],
+        ]
+
+        # ── Side-wall colorscale (subtle grey-brown) ──
+        WALL_COLOR = [
+            [0.0, 'rgb(130, 110, 90)'],
+            [1.0, 'rgb(160, 140, 120)'],
+        ]
+
         fig = go.Figure()
 
+        # ═══════════════════════════════════════════════════════════
+        #  Scatter mode
+        # ═══════════════════════════════════════════════════════════
         if vis['render_mode'] == "Scatter (nodes)":
+            z_plot = df[z_col] * z_exag
             fig.add_trace(go.Scatter3d(
-                x=df['X'], y=df['Y'], z=df[z_col],
+                x=df['X'], y=df['Y'], z=z_plot,
                 mode='markers',
                 marker=dict(
                     size=vis['marker_size'],
@@ -849,60 +919,265 @@ if dat_files_found > 0 and mesh_found:
                     ),
                 ),
                 hovertemplate=(
-                    'X: %{x:.1f} m<br>Y: %{y:.1f} m<br>Z: %{z:.1f} m<extra></extra>'
+                    'X: %{x:.1f} m<br>Y: %{y:.1f} m<br>'
+                    f'Z: %{{z:.1f}} m' +
+                    (f'  (×{z_exag:.1f})' if z_exag != 1.0 else '') +
+                    '<extra></extra>'
                 ),
             ))
+
+        # ═══════════════════════════════════════════════════════════
+        #  Continuous surface mode
+        # ═══════════════════════════════════════════════════════════
         else:
             layer = vis['surface_layer']
-            reduce = 'top' if layer.startswith('Top') else (
-                'bottom' if layer.startswith('Bottom') else 'mid'
-            )
-            X_grid, Y_grid, Z_grid, was_full = grid_from_xyz(
-                df, 'X', 'Y', z_col,
-                reduce=reduce,
-                interp_method=vis['interp_method'],
-            )
 
-            fig.add_trace(go.Surface(
-                x=X_grid, y=Y_grid, z=Z_grid,
-                colorscale=colorscale,
-                opacity=vis['marker_opacity'],
-                showscale=True,
-                colorbar=dict(
-                    title='Elevation (m)',
-                    tickfont=dict(size=vis['tick_font_size']),
-                    title_font=dict(size=vis['title_font_size']),
-                    len=0.75, thickness=20,
-                ),
-                lighting=dict(ambient=0.55, diffuse=0.7,
-                              fresnel=0.15, specular=0.15, roughness=0.4),
-                lightposition=dict(x=0, y=0, z=1000),
-            ))
-
-            if vis['show_wireframe']:
-                nx, ny = X_grid.shape
-                step_x = max(1, nx // 25)
-                step_y = max(1, ny // 25)
-                for i in range(0, nx, step_x):
-                    fig.add_trace(go.Scatter3d(
-                        x=X_grid[i, :], y=Y_grid[i, :], z=Z_grid[i, :],
-                        mode='lines',
-                        line=dict(color='black', width=vis['wireframe_width']),
-                        opacity=0.35, showlegend=False, hoverinfo='skip',
-                    ))
-                for j in range(0, ny, step_y):
-                    fig.add_trace(go.Scatter3d(
-                        x=X_grid[:, j], y=Y_grid[:, j], z=Z_grid[:, j],
-                        mode='lines',
-                        line=dict(color='black', width=vis['wireframe_width']),
-                        opacity=0.35, showlegend=False, hoverinfo='skip',
-                    ))
-
-            if not was_full:
-                st.caption(
-                    "ℹ️ Grid had missing cells — gaps were filled with "
-                    f"`{vis['interp_method']}` interpolation before rendering."
+            # ───────────────────────────────────────────────────────
+            #  Full geometry: top + bottom + optional side walls
+            # ───────────────────────────────────────────────────────
+            if layer.startswith('Full'):
+                # Compute both surfaces
+                X_top, Y_top, Z_top, was_full_top = grid_from_xyz(
+                    df, 'X', 'Y', z_col,
+                    reduce='top',
+                    interp_method=vis['interp_method'],
                 )
+                X_bot, Y_bot, Z_bot, was_full_bot = grid_from_xyz(
+                    df, 'X', 'Y', z_col,
+                    reduce='bottom',
+                    interp_method=vis['interp_method'],
+                )
+
+                # Apply Z exaggeration
+                Z_top_plot = Z_top * z_exag
+                Z_bot_plot = Z_bot * z_exag
+
+                # Resolve bedrock colorscale
+                bed_cscale, _ = resolve_colorscale(
+                    vis.get('bedrock_cscale', 'Earth'),
+                    vis.get('bedrock_cscale_reversed', False),
+                )
+
+                # ── Top surface (glacier) ──
+                fig.add_trace(go.Surface(
+                    x=X_top, y=Y_top, z=Z_top_plot,
+                    colorscale=colorscale,
+                    opacity=vis['marker_opacity'],
+                    showscale=True,
+                    colorbar=dict(
+                        title='Z surf (m)',
+                        tickfont=dict(size=vis['tick_font_size']),
+                        title_font=dict(size=vis['title_font_size']),
+                        len=0.75, thickness=20,
+                        x=1.0,
+                    ),
+                    name='Glacier Surface',
+                    lighting=dict(ambient=0.55, diffuse=0.7,
+                                  fresnel=0.15, specular=0.15, roughness=0.4),
+                    lightposition=dict(x=0, y=0, z=1000),
+                ))
+
+                # ── Bottom surface (bedrock) ──
+                fig.add_trace(go.Surface(
+                    x=X_bot, y=Y_bot, z=Z_bot_plot,
+                    colorscale=bed_cscale,
+                    opacity=vis['marker_opacity'] * 0.92,
+                    showscale=True,
+                    colorbar=dict(
+                        title='Z bed (m)',
+                        tickfont=dict(size=vis['tick_font_size']),
+                        title_font=dict(size=vis['title_font_size']),
+                        len=0.75, thickness=20,
+                        x=1.15,   # offset so bars don't overlap
+                    ),
+                    name='Bedrock',
+                    lighting=dict(ambient=0.65, diffuse=0.6,
+                                  fresnel=0.1, specular=0.1, roughness=0.5),
+                    lightposition=dict(x=0, y=0, z=500),
+                ))
+
+                # ── Side walls (filled panels closing the volume) ──
+                if vis.get('show_side_walls', False):
+                    # Align bottom grid to top grid if shapes differ
+                    if X_bot.shape == X_top.shape:
+                        Z_bot_aligned = Z_bot_plot
+                        X_bot_ref = X_bot
+                        Y_bot_ref = Y_bot
+                    else:
+                        # Shapes differ — interpolate bottom onto top grid
+                        if _SCIPY_AVAILABLE:
+                            pts_b = np.column_stack([
+                                X_bot.ravel(), Y_bot.ravel()
+                            ])
+                            vals_b = Z_bot_plot.ravel()
+                            pts_t = np.column_stack([
+                                X_top.ravel(), Y_top.ravel()
+                            ])
+                            Z_bot_aligned = _scipy_griddata(
+                                pts_b, vals_b, pts_t, method='linear'
+                            ).reshape(X_top.shape)
+                            # Fill any remaining NaN
+                            nan_mask = np.isnan(Z_bot_aligned)
+                            if nan_mask.any():
+                                Z_near = _scipy_griddata(
+                                    pts_b, vals_b, pts_t, method='nearest'
+                                ).reshape(X_top.shape)
+                                Z_bot_aligned[nan_mask] = Z_near[nan_mask]
+                        else:
+                            # Fallback: use top-grid Z_bot from grid_from_xyz
+                            # recompute bottom on top's grid via pivot
+                            Z_bot_aligned = Z_bot_plot[
+                                :X_top.shape[0], :X_top.shape[1]
+                            ] if (Z_bot_plot.shape[0] >= X_top.shape[0] and
+                                  Z_bot_plot.shape[1] >= X_top.shape[1]) \
+                              else np.full_like(Z_top_plot, np.nanmean(Z_bot_plot))
+                        X_bot_ref = X_top
+                        Y_bot_ref = Y_top
+
+                    nx, ny = X_top.shape
+                    n_t = 8          # vertical subdivisions per wall
+                    t_arr = np.linspace(0.0, 1.0, n_t)
+
+                    # Helper: fill NaN along an edge for wall safety
+                    def _safe_fill(arr_1d):
+                        a = arr_1d.copy()
+                        if not np.isnan(a).any():
+                            return a
+                        valid = ~np.isnan(a)
+                        if valid.any():
+                            a[~valid] = np.interp(
+                                np.where(~valid)[0],
+                                np.where(valid)[0],
+                                a[valid],
+                            )
+                        return a
+
+                    # Front wall (j = 0) and back wall (j = ny-1)
+                    for j_idx in [0, ny - 1]:
+                        x_edge = X_top[:, j_idx]
+                        y_val = float(Y_top[0, j_idx])
+                        z_top_e = _safe_fill(Z_top_plot[:, j_idx])
+                        z_bot_e = _safe_fill(Z_bot_aligned[:, j_idx])
+
+                        X_w, _ = np.meshgrid(x_edge, t_arr, indexing='ij')
+                        Y_w = np.full_like(X_w, y_val)
+                        Z_w = (np.outer(z_bot_e, np.ones(n_t))
+                               + np.outer(z_top_e - z_bot_e, t_arr))
+
+                        fig.add_trace(go.Surface(
+                            x=X_w, y=Y_w, z=Z_w,
+                            colorscale=WALL_COLOR,
+                            opacity=0.70, showscale=False,
+                            showlegend=False, hoverinfo='skip',
+                        ))
+
+                    # Left wall (i = 0) and right wall (i = nx-1)
+                    for i_idx in [0, nx - 1]:
+                        y_edge = Y_top[i_idx, :]
+                        x_val = float(X_top[i_idx, 0])
+                        z_top_e = _safe_fill(Z_top_plot[i_idx, :])
+                        z_bot_e = _safe_fill(Z_bot_aligned[i_idx, :])
+
+                        Y_w, _ = np.meshgrid(y_edge, t_arr, indexing='ij')
+                        X_w = np.full_like(Y_w, x_val)
+                        Z_w = (np.outer(z_bot_e, np.ones(n_t))
+                               + np.outer(z_top_e - z_bot_e, t_arr))
+
+                        fig.add_trace(go.Surface(
+                            x=X_w, y=Y_w, z=Z_w,
+                            colorscale=WALL_COLOR,
+                            opacity=0.70, showscale=False,
+                            showlegend=False, hoverinfo='skip',
+                        ))
+
+                # ── Wireframe overlay on top surface ──
+                if vis['show_wireframe']:
+                    nx, ny = X_top.shape
+                    step_x = max(1, nx // 25)
+                    step_y = max(1, ny // 25)
+                    for i in range(0, nx, step_x):
+                        fig.add_trace(go.Scatter3d(
+                            x=X_top[i, :], y=Y_top[i, :], z=Z_top_plot[i, :],
+                            mode='lines',
+                            line=dict(color='black', width=vis['wireframe_width']),
+                            opacity=0.35, showlegend=False, hoverinfo='skip',
+                        ))
+                    for j in range(0, ny, step_y):
+                        fig.add_trace(go.Scatter3d(
+                            x=X_top[:, j], y=Y_top[:, j], z=Z_top_plot[:, j],
+                            mode='lines',
+                            line=dict(color='black', width=vis['wireframe_width']),
+                            opacity=0.35, showlegend=False, hoverinfo='skip',
+                        ))
+
+                if not (was_full_top and was_full_bot):
+                    st.caption(
+                        "ℹ️ Grid had missing cells — gaps were filled with "
+                        f"`{vis['interp_method']}` interpolation before rendering."
+                    )
+
+            # ───────────────────────────────────────────────────────
+            #  Single layer (original behaviour)
+            # ───────────────────────────────────────────────────────
+            else:
+                reduce = 'top' if layer.startswith('Top') else (
+                    'bottom' if layer.startswith('Bottom') else 'mid'
+                )
+                X_grid, Y_grid, Z_grid, was_full = grid_from_xyz(
+                    df, 'X', 'Y', z_col,
+                    reduce=reduce,
+                    interp_method=vis['interp_method'],
+                )
+
+                Z_grid_plot = Z_grid * z_exag
+
+                fig.add_trace(go.Surface(
+                    x=X_grid, y=Y_grid, z=Z_grid_plot,
+                    colorscale=colorscale,
+                    opacity=vis['marker_opacity'],
+                    showscale=True,
+                    colorbar=dict(
+                        title='Elevation (m)',
+                        tickfont=dict(size=vis['tick_font_size']),
+                        title_font=dict(size=vis['title_font_size']),
+                        len=0.75, thickness=20,
+                    ),
+                    lighting=dict(ambient=0.55, diffuse=0.7,
+                                  fresnel=0.15, specular=0.15, roughness=0.4),
+                    lightposition=dict(x=0, y=0, z=1000),
+                ))
+
+                if vis['show_wireframe']:
+                    nx, ny = X_grid.shape
+                    step_x = max(1, nx // 25)
+                    step_y = max(1, ny // 25)
+                    for i in range(0, nx, step_x):
+                        fig.add_trace(go.Scatter3d(
+                            x=X_grid[i, :], y=Y_grid[i, :], z=Z_grid_plot[i, :],
+                            mode='lines',
+                            line=dict(color='black', width=vis['wireframe_width']),
+                            opacity=0.35, showlegend=False, hoverinfo='skip',
+                        ))
+                    for j in range(0, ny, step_y):
+                        fig.add_trace(go.Scatter3d(
+                            x=X_grid[:, j], y=Y_grid[:, j], z=Z_grid_plot[:, j],
+                            mode='lines',
+                            line=dict(color='black', width=vis['wireframe_width']),
+                            opacity=0.35, showlegend=False, hoverinfo='skip',
+                        ))
+
+                if not was_full:
+                    st.caption(
+                        "ℹ️ Grid had missing cells — gaps were filled with "
+                        f"`{vis['interp_method']}` interpolation before rendering."
+                    )
+
+        # ═══════════════════════════════════════════════════════════
+        #  Layout (with Z-exaggeration label)
+        # ═══════════════════════════════════════════════════════════
+        z_axis_title = 'Elevation Z (m)'
+        if z_exag != 1.0:
+            z_axis_title = f'Elevation Z (m)  [×{z_exag:.1f}]'
 
         fig.update_layout(
             title=dict(text=title, font=dict(size=vis['title_font_size'] + 2)),
@@ -927,7 +1202,7 @@ if dat_files_found > 0 and mesh_found:
                     gridwidth=vis['grid_width'],
                 ),
                 zaxis=dict(
-                    title='Elevation Z (m)',
+                    title=z_axis_title,
                     title_font=dict(size=vis['title_font_size']),
                     tickfont=dict(size=vis['tick_font_size']),
                     linewidth=vis['axes_line_width'],
