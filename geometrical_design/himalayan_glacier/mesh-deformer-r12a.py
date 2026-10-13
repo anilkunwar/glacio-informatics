@@ -490,6 +490,22 @@ if dat_files_found > 0 and mesh_found:
         d = df.sort_values('X').drop_duplicates('X').reset_index(drop=True)
         return d['X'].to_numpy(), d['Z'].to_numpy()
 
+
+    def _sanitize_profile(df, name="profile"):
+        """Remove NaN/inf rows and enforce numeric X, Z columns.
+
+        Returns a clean DataFrame sorted by X with duplicates removed.
+        If the result is empty, returns the original surface_df or bedrock_df
+        as a fallback so the app never crashes.
+        """
+        df = df.copy()
+        df['X'] = pd.to_numeric(df['X'], errors='coerce')
+        df['Z'] = pd.to_numeric(df['Z'], errors='coerce')
+        df = df.replace([np.inf, -np.inf], np.nan)
+        df = df.dropna(subset=['X', 'Z'])
+        df = df.sort_values('X').drop_duplicates('X').reset_index(drop=True)
+        return df
+
     def enforce_max_depth(surface_df, bedrock_df, max_depth):
         """Hanging-glacier constraint: raise bedrock so depth ≤ max_depth."""
         bedrock_df = bedrock_df.copy()
@@ -1822,19 +1838,53 @@ if dat_files_found > 0 and mesh_found:
 
         def _show_depth_status():
             """Show current depth statistics — always informational,
-            never blocking."""
+            never blocking.  Robust to NaN / empty data."""
             _surf = st.session_state.get('surface_df_mod', surface_df)
             _bed = st.session_state.get('bedrock_df_mod', bedrock_df)
 
-            surf_a, bed_a = regrid_to_common_x(_surf, _bed)
-            depth = surf_a['Z'].to_numpy() - bed_a['Z'].to_numpy()
+            _surf_clean = _sanitize_profile(_surf)
+            _bed_clean = _sanitize_profile(_bed)
+
+            if len(_surf_clean) == 0 or len(_bed_clean) == 0:
+                st.error(
+                    "❌ One or both profiles are empty after removing "
+                    "invalid (NaN/∞) values.  Check the table editor for "
+                    "blank cells."
+                )
+                return
+
+            try:
+                surf_a, bed_a = regrid_to_common_x(_surf_clean, _bed_clean)
+                depth = surf_a['Z'].to_numpy() - bed_a['Z'].to_numpy()
+            except Exception as e:
+                st.error(f"❌ Could not compute depth: {e}")
+                return
+
+            # ── Handle residual NaN in depth array ──
+            nan_count = int(np.isnan(depth).sum())
+            if nan_count > 0:
+                valid_mask = ~np.isnan(depth)
+                n_valid = int(valid_mask.sum())
+                if n_valid == 0:
+                    st.error(
+                        f"❌ All **{len(depth)}** depth values are NaN — "
+                        f"the surface and bedrock X ranges may not overlap."
+                    )
+                    return
+                depth_valid = depth[valid_mask]
+                st.warning(
+                    f"⚠️ **{nan_count}** NaN depth value(s) excluded from stats "
+                    f"(X-range mismatch between surface and bedrock)."
+                )
+                depth = depth_valid
+
             n_pts = len(depth)
             d_max = float(depth.max())
             d_min = float(depth.min())
             d_mean = float(depth.mean())
             n_inverted = int((depth < 0).sum())
 
-            # ── Free mode: just show a compact info badge ──
+            # ── Free mode: compact info badge ──
             if not constraints_enabled:
                 if n_inverted > 0:
                     st.error(
@@ -1852,9 +1902,12 @@ if dat_files_found > 0 and mesh_found:
                 return
 
             # ── Constrained mode ──
-            n_exceed_max = int((depth > max_depth).sum()) if max_depth is not None else 0
-            n_below_min = int((depth < min_depth).sum()) if min_depth is not None else 0
-
+            n_exceed_max = (
+                int((depth > max_depth).sum()) if max_depth is not None else 0
+            )
+            n_below_min = (
+                int((depth < min_depth).sum()) if min_depth is not None else 0
+            )
             all_ok = (n_inverted == 0 and n_exceed_max == 0 and n_below_min == 0)
 
             if all_ok:
@@ -1982,7 +2035,7 @@ if dat_files_found > 0 and mesh_found:
                             key=slider_key_s,
                         )
 
-                        if abs(new_z_s - cur_z_s) > 0.05:
+                        if abs(new_z_s - cur_z_s) > 0.05 and np.isfinite(new_z_s):
                             df = st.session_state['surface_df_mod'].copy()
                             df.loc[surf_pt, 'Z'] = new_z_s
                             df = df.sort_values('X').reset_index(drop=True)
@@ -2031,7 +2084,7 @@ if dat_files_found > 0 and mesh_found:
                             key=slider_key_b,
                         )
 
-                        if abs(new_z_b - cur_z_b) > 0.05:
+                        if abs(new_z_b - cur_z_b) > 0.05 and np.isfinite(new_z_b):
                             df = st.session_state['bedrock_df_mod'].copy()
                             df.loc[bed_pt, 'Z'] = new_z_b
                             df = df.sort_values('X').reset_index(drop=True)
@@ -2101,22 +2154,36 @@ if dat_files_found > 0 and mesh_found:
                         key="surface_point_editor",
                     )
 
-                    # ── Commit: detect Z changes and write back ──
-                    if edited_surf is not None and len(edited_surf) == n_surf:
-                        z_old = surf_current['Z'].to_numpy()
-                        z_new = edited_surf['Z'].to_numpy()
-                        if not np.array_equal(z_old, z_new):
-                            st.session_state['surface_df_mod'] = (
-                                edited_surf.sort_values('X')
-                                .reset_index(drop=True)
-                                .copy()
+                    # ── Commit with sanitization ──
+                    if edited_surf is not None:
+                        edited_clean = _sanitize_profile(edited_surf, "surface")
+                        if len(edited_clean) == 0:
+                            st.error(
+                                "❌ All surface Z values are invalid (NaN/∞).  "
+                                "Fix the table or press Reset."
                             )
+                        elif len(edited_clean) != n_surf:
+                            st.warning(
+                                f"⚠️ {n_surf - len(edited_clean)} row(s) had "
+                                f"invalid Z values and were dropped."
+                            )
+                            st.session_state['surface_df_mod'] = edited_clean.copy()
                             _enforce_constraints()
-                            st.toast(
-                                f"✅ Surface updated  "
-                                f"({int(np.sum(z_old != z_new))} cell(s) changed)",
-                                icon="✏️",
-                            )
+                        else:
+                            z_old = surf_current['Z'].to_numpy()
+                            z_new = edited_clean['Z'].to_numpy()
+                            if not np.allclose(z_old, z_new, atol=0.005):
+                                st.session_state['surface_df_mod'] = (
+                                    edited_clean.copy()
+                                )
+                                _enforce_constraints()
+                                n_changed = int(
+                                    (~np.isclose(z_old, z_new, atol=0.005)).sum()
+                                )
+                                st.toast(
+                                    f"✅ Surface updated ({n_changed} cell(s))",
+                                    icon="✏️",
+                                )
 
                     if st.button(
                         "Reset Surface to Original",
@@ -2167,22 +2234,36 @@ if dat_files_found > 0 and mesh_found:
                         key="bedrock_point_editor",
                     )
 
-                    # ── Commit: detect Z changes and write back ──
-                    if edited_bed is not None and len(edited_bed) == n_bed:
-                        z_old = bed_current['Z'].to_numpy()
-                        z_new = edited_bed['Z'].to_numpy()
-                        if not np.array_equal(z_old, z_new):
-                            st.session_state['bedrock_df_mod'] = (
-                                edited_bed.sort_values('X')
-                                .reset_index(drop=True)
-                                .copy()
+                    # ── Commit with sanitization ──
+                    if edited_bed is not None:
+                        edited_clean = _sanitize_profile(edited_bed, "bedrock")
+                        if len(edited_clean) == 0:
+                            st.error(
+                                "❌ All bedrock Z values are invalid (NaN/∞).  "
+                                "Fix the table or press Reset."
                             )
+                        elif len(edited_clean) != n_bed:
+                            st.warning(
+                                f"⚠️ {n_bed - len(edited_clean)} row(s) had "
+                                f"invalid Z values and were dropped."
+                            )
+                            st.session_state['bedrock_df_mod'] = edited_clean.copy()
                             _enforce_constraints()
-                            st.toast(
-                                f"✅ Bedrock updated  "
-                                f"({int(np.sum(z_old != z_new))} cell(s) changed)",
-                                icon="✏️",
-                            )
+                        else:
+                            z_old = bed_current['Z'].to_numpy()
+                            z_new = edited_clean['Z'].to_numpy()
+                            if not np.allclose(z_old, z_new, atol=0.005):
+                                st.session_state['bedrock_df_mod'] = (
+                                    edited_clean.copy()
+                                )
+                                _enforce_constraints()
+                                n_changed = int(
+                                    (~np.isclose(z_old, z_new, atol=0.005)).sum()
+                                )
+                                st.toast(
+                                    f"✅ Bedrock updated ({n_changed} cell(s))",
+                                    icon="✏️",
+                                )
 
                     if st.button(
                         "Reset Bedrock to Original",
