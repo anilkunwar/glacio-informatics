@@ -1711,82 +1711,108 @@ if dat_files_found > 0 and mesh_found:
         )
 
         # ---- Constraint panel ---------------------------------------
-        st.markdown("### 📐 Physical Constraints")
+        st.markdown("### 📐 Depth Constraints")
 
-        col_cm, col_md, col_mid = st.columns(3)
-        with col_cm:
-            constraint_mode = st.radio(
-                "Constraint mode",
-                options=[
-                    "Advisory (notify only)",
-                    "Enforced (auto-correct)",
-                    "Disabled",
-                ],
-                index=0,          # ← default is now Advisory
-                key="constraint_mode",
-                horizontal=True,
-                help=(
-                    "• **Advisory** — edits always proceed; violations shown "
-                    "as warnings only.\n"
-                    "• **Enforced** — data is auto-corrected after every edit "
-                    "to stay within limits.\n"
-                    "• **Disabled** — no constraint checking at all."
-                ),
-            )
-        with col_md:
-            max_depth = st.number_input(
-                "Max Ice Depth (m)",
-                min_value=1.0, max_value=1000.0, value=200.0, step=10.0,
-                key="max_depth_input",
-                help=(
-                    "Reference maximum ice depth. In Advisory mode, exceeding "
-                    "this is allowed and reported. In Enforced mode, bedrock "
-                    "is raised to comply."
-                ),
-            )
-        with col_mid:
-            min_depth = st.number_input(
-                "Min Ice Depth (m)",
-                min_value=0.0, max_value=100.0, value=1.0, step=0.5,
-                key="min_depth_input",
-                help="Prevent degenerate elements: depth ≥ this value.",
-            )
+        # ── MASTER TOGGLE ──
+        constraints_enabled = st.toggle(
+            "Enable depth constraints",
+            value=False,
+            key="constraints_enabled",
+            help=(
+                "OFF → Free modification: no depth limits, edits always "
+                "proceed, status shown for information only.\n"
+                "ON → Depth limits active: choose a max allowable depth "
+                "and whether violations warn or auto-correct."
+            ),
+        )
+
+        if constraints_enabled:
+            col_left, col_right = st.columns(2)
+
+            with col_left:
+                st.markdown("**Max allowable depth**")
+                max_depth_preset = st.selectbox(
+                    "Preset",
+                    options=[
+                        "30 m  (shallow ice)",
+                        "50 m  (moderate ice)",
+                        "100 m (thick ice)",
+                        "200 m (very thick ice)",
+                        "500 m (polar-scale)",
+                        "1000 m (unlimited practical)",
+                        "Custom",
+                    ],
+                    index=1,          # default = 50 m
+                    key="max_depth_preset",
+                    help="Pick a preset or choose Custom to enter any value.",
+                )
+
+                if max_depth_preset == "Custom":
+                    max_depth = st.number_input(
+                        "Custom max depth (m)",
+                        min_value=1.0, max_value=5000.0,
+                        value=200.0, step=10.0,
+                        key="max_depth_custom",
+                    )
+                else:
+                    # Parse the number from the preset string
+                    max_depth = float(max_depth_preset.split(" m")[0])
+                    st.caption(f"Max depth = **{max_depth:.0f} m**")
+
+            with col_right:
+                constraint_action = st.radio(
+                    "When violated",
+                    options=["Warn only", "Auto-correct"],
+                    index=0,
+                    key="constraint_action",
+                    horizontal=True,
+                    help=(
+                        "• **Warn only** — show warning, edit stands\n"
+                        "• **Auto-correct** — fix bedrock after each edit"
+                    ),
+                )
+                min_depth = st.number_input(
+                    "Min depth (m)",
+                    min_value=0.0, max_value=100.0,
+                    value=1.0, step=0.5,
+                    key="min_depth_input",
+                    help="Ice thickness below this triggers a warning or correction.",
+                )
+        else:
+            constraint_action = "Warn only"
+            max_depth = None
+            min_depth = None
 
         coupled = "Coupled" in edit_mode
         edit_surface = ("Surface" in edit_mode) or ("Both" in edit_mode) or coupled
         edit_bedrock = ("Bedrock" in edit_mode) or ("Both" in edit_mode) or coupled
 
         def _enforce_constraints():
-            """Apply depth constraints — only in Enforced mode.
-
-            Advisory mode: do nothing (let edits stand, show status later).
-            Disabled mode: do nothing.
-            """
-            _mode = st.session_state.get(
-                'constraint_mode', 'Advisory (notify only)'
-            )
-
-            if _mode != 'Enforced (auto-correct)':
+            """Apply depth constraints — only when enabled AND auto-correct."""
+            if not constraints_enabled:
+                return
+            if constraint_action != "Auto-correct":
                 return
 
             may_touch_bedrock = coupled or (edit_surface and edit_bedrock)
             if may_touch_bedrock:
-                st.session_state['bedrock_df_mod'] = enforce_max_depth(
-                    st.session_state['surface_df_mod'],
-                    st.session_state['bedrock_df_mod'],
-                    max_depth,
-                )
-                st.session_state['bedrock_df_mod'] = enforce_min_depth(
-                    st.session_state['surface_df_mod'],
-                    st.session_state['bedrock_df_mod'],
-                    min_depth,
-                )
+                if max_depth is not None:
+                    st.session_state['bedrock_df_mod'] = enforce_max_depth(
+                        st.session_state['surface_df_mod'],
+                        st.session_state['bedrock_df_mod'],
+                        max_depth,
+                    )
+                if min_depth is not None:
+                    st.session_state['bedrock_df_mod'] = enforce_min_depth(
+                        st.session_state['surface_df_mod'],
+                        st.session_state['bedrock_df_mod'],
+                        min_depth,
+                    )
                 st.session_state['bedrock_df_mod'] = enforce_bedrock_below_surface(
                     st.session_state['surface_df_mod'],
                     st.session_state['bedrock_df_mod'],
                     margin=0.1,
                 )
-            # Also enforce surface-only: keep bedrock below surface
             elif edit_surface and not edit_bedrock:
                 st.session_state['bedrock_df_mod'] = enforce_bedrock_below_surface(
                     st.session_state['surface_df_mod'],
@@ -1794,85 +1820,87 @@ if dat_files_found > 0 and mesh_found:
                     margin=0.1,
                 )
 
-        def _show_constraint_status():
-            """Show constraint violation counts as advisory notifications.
-
-            Called after every edit to give the user situational awareness
-            without blocking their work.
-            """
-            _mode = st.session_state.get(
-                'constraint_mode', 'Advisory (notify only)'
-            )
-            if _mode == 'Disabled':
-                return
-
+        def _show_depth_status():
+            """Show current depth statistics — always informational,
+            never blocking."""
             _surf = st.session_state.get('surface_df_mod', surface_df)
             _bed = st.session_state.get('bedrock_df_mod', bedrock_df)
 
-            flags = validate_profiles(
-                _surf, _bed,
-                max_depth=max_depth,
-                min_depth=min_depth,
-            )
+            surf_a, bed_a = regrid_to_common_x(_surf, _bed)
+            depth = surf_a['Z'].to_numpy() - bed_a['Z'].to_numpy()
+            n_pts = len(depth)
+            d_max = float(depth.max())
+            d_min = float(depth.min())
+            d_mean = float(depth.mean())
+            n_inverted = int((depth < 0).sum())
 
-            msgs = []
-            if flags['n_above_surface'] > 0:
-                msgs.append((
-                    'error',
-                    f"❌ **{flags['n_above_surface']}** point(s) have bedrock "
-                    f"above the surface (min depth = {flags['depth_min']:.2f} m). "
-                    f"This will cause inverted elements.",
-                ))
-            if flags['n_exceeds_max'] > 0:
-                msgs.append((
-                    'warning',
-                    f"⚠️ **{flags['n_exceeds_max']}** point(s) exceed max depth "
-                    f"of {max_depth:.0f} m  "
-                    f"(actual max = **{flags['depth_max']:.1f} m**).  "
-                    f"This is allowed in Advisory mode.",
-                ))
-            if flags['n_below_min'] > 0:
-                msgs.append((
-                    'warning',
-                    f"⚠️ **{flags['n_below_min']}** point(s) are below min depth "
-                    f"of {min_depth:.1f} m  "
-                    f"(actual min = **{flags['depth_min']:.2f} m**).  "
-                    f"May cause degenerate elements.",
-                ))
+            # ── Free mode: just show a compact info badge ──
+            if not constraints_enabled:
+                if n_inverted > 0:
+                    st.error(
+                        f"❌ **{n_inverted}** inverted point(s) "
+                        f"(bedrock above surface)  ·  "
+                        f"depth range: {d_min:.1f} – {d_max:.1f} m  ·  "
+                        f"mean: {d_mean:.1f} m"
+                    )
+                else:
+                    st.info(
+                        f"📐 Depth: **{d_min:.1f}** – **{d_max:.1f}** m  "
+                        f"(mean {d_mean:.1f} m, {n_pts} pts)  ·  "
+                        f"Constraints **off** — edit freely"
+                    )
+                return
 
-            if not msgs:
+            # ── Constrained mode ──
+            n_exceed_max = int((depth > max_depth).sum()) if max_depth is not None else 0
+            n_below_min = int((depth < min_depth).sum()) if min_depth is not None else 0
+
+            all_ok = (n_inverted == 0 and n_exceed_max == 0 and n_below_min == 0)
+
+            if all_ok:
                 st.success(
-                    f"✅ All **{flags['n_points']}** points within constraints  "
-                    f"·  depth range: {flags['depth_min']:.1f} – "
-                    f"{flags['depth_max']:.1f} m  "
-                    f"·  mean: {flags['depth_mean']:.1f} m"
+                    f"✅ All {n_pts} points within constraints  ·  "
+                    f"depth: {d_min:.1f} – {d_max:.1f} m  ·  "
+                    f"mean: {d_mean:.1f} m"
                 )
             else:
-                for level, msg in msgs:
-                    if level == 'error':
-                        st.error(msg)
-                    else:
-                        st.warning(msg)
-
-                if _mode == 'Advisory (notify only)':
+                if n_inverted > 0:
+                    st.error(
+                        f"❌ **{n_inverted}** inverted point(s) "
+                        f"(bedrock above surface)"
+                    )
+                if n_exceed_max > 0:
+                    st.warning(
+                        f"⚠️ **{n_exceed_max}** point(s) exceed max depth "
+                        f"of {max_depth:.0f} m  "
+                        f"(actual max = **{d_max:.1f} m**)"
+                    )
+                if n_below_min > 0:
+                    st.warning(
+                        f"⚠️ **{n_below_min}** point(s) below min depth "
+                        f"of {min_depth:.1f} m  "
+                        f"(actual min = **{d_min:.2f} m**)"
+                    )
+                if constraint_action == "Warn only":
                     st.caption(
-                        "💡 Switch to **Enforced** mode or press "
-                        "**🔨 Force-Apply Constraints** below to auto-correct."
+                        "💡 Switch to **Auto-correct** or press "
+                        "**🔨 Force-Apply** to fix."
                     )
 
-        def _force_apply_constraints():
-            """One-shot enforcement: apply all constraints now regardless
-            of the current mode."""
-            st.session_state['bedrock_df_mod'] = enforce_max_depth(
-                st.session_state['surface_df_mod'],
-                st.session_state['bedrock_df_mod'],
-                max_depth,
-            )
-            st.session_state['bedrock_df_mod'] = enforce_min_depth(
-                st.session_state['surface_df_mod'],
-                st.session_state['bedrock_df_mod'],
-                min_depth,
-            )
+        def _force_apply():
+            """One-shot enforcement regardless of current mode."""
+            if max_depth is not None:
+                st.session_state['bedrock_df_mod'] = enforce_max_depth(
+                    st.session_state['surface_df_mod'],
+                    st.session_state['bedrock_df_mod'],
+                    max_depth,
+                )
+            if min_depth is not None:
+                st.session_state['bedrock_df_mod'] = enforce_min_depth(
+                    st.session_state['surface_df_mod'],
+                    st.session_state['bedrock_df_mod'],
+                    min_depth,
+                )
             st.session_state['bedrock_df_mod'] = enforce_bedrock_below_surface(
                 st.session_state['surface_df_mod'],
                 st.session_state['bedrock_df_mod'],
@@ -1888,32 +1916,24 @@ if dat_files_found > 0 and mesh_found:
             "⑤ Resample Grid",
         ])
 
-        # ── Constraint status bar (shown above all edit sub-tabs) ──
-        _show_constraint_status()
+        # ── Depth status bar (always visible) ──
+        _show_depth_status()
 
-        # ── Force-Apply button (always available) ──
-        _mode_now = st.session_state.get(
-            'constraint_mode', 'Advisory (notify only)'
-        )
-        if _mode_now != 'Disabled':
-            fa_col1, fa_col2 = st.columns([1, 4])
+        # ── Force-Apply button (visible when constraints are on) ──
+        if constraints_enabled:
+            fa_col1, fa_col2 = st.columns([1, 5])
             with fa_col1:
                 if st.button(
-                    "🔨 Force-Apply Constraints",
-                    key="force_apply_constraints_btn",
-                    help=(
-                        "Apply all constraints NOW regardless of the current "
-                        "mode. Raises bedrock to enforce max depth, lowers "
-                        "bedrock to enforce min depth, and ensures bedrock "
-                        "stays below surface."
-                    ),
+                    "🔨 Force-Apply",
+                    key="force_apply_btn",
+                    type="secondary",
                 ):
-                    _force_apply_constraints()
+                    _force_apply()
                     st.rerun()
             with fa_col2:
                 st.caption(
-                    "Applies max-depth, min-depth, and bedrock-below-surface "
-                    f"constraints in one shot.  Current mode: **{_mode_now}**."
+                    "One-shot: enforce max-depth, min-depth, and "
+                    "bedrock-below-surface right now."
                 )
 
         # ════════════════════════════════════════════════════════════
@@ -2071,10 +2091,8 @@ if dat_files_found > 0 and mesh_found:
                         st.session_state['bedrock_df_mod'] = edited
                         _enforce_constraints()
                         if (coupled or (edit_surface and edit_bedrock
-                                        and st.session_state.get(
-                                            'constraint_mode',
-                                            'Advisory (notify only)',
-                                        ) == 'Enforced (auto-correct)')):
+                                        and constraints_enabled
+                                        and constraint_action == "Auto-correct")):
                             if 'bedrock_point_editor' in st.session_state:
                                 del st.session_state['bedrock_point_editor']
 
@@ -2131,7 +2149,8 @@ if dat_files_found > 0 and mesh_found:
             st.markdown("#### Bulk Transformations")
             st.caption(
                 "Apply transformations to the selected profile(s). "
-                "Constraints are applied automatically only in **Enforced** mode."
+                "Constraints are applied automatically only in "
+                "**Auto-correct** mode."
             )
 
             if edit_surface and not edit_bedrock:
@@ -2315,9 +2334,15 @@ if dat_files_found > 0 and mesh_found:
             st.info("🔒 **Surface is FROZEN** — only the bedrock is editable. "
                     "The surface trace will not change.")
         elif coupled:
-            st.warning("🔗 **Coupled mode** — editing one profile will "
-                       "auto-adjust the other to maintain depth constraints "
-                       f"(max={max_depth} m, min={min_depth} m).")
+            if constraints_enabled:
+                st.warning("🔗 **Coupled mode** — editing one profile will "
+                           "auto-adjust the other to maintain depth constraints "
+                           f"(max={max_depth} m, min={min_depth} m).")
+            else:
+                st.info("🔗 **Coupled mode** — depth constraints are **off**, "
+                        "so both profiles are effectively independent. "
+                        "Toggle 'Enable depth constraints' above to enforce "
+                        "auto-adjustment.")
         else:
             st.caption("Both profiles are independently editable.")
 
@@ -2412,12 +2437,14 @@ if dat_files_found > 0 and mesh_found:
             line=dict(color='teal', width=3),
             fill='tozeroy', fillcolor='rgba(0,128,128,0.15)',
         ))
-        fig_dep.add_hline(y=max_depth, line=dict(color='red', dash='dash'),
-                          annotation_text=f"Max = {max_depth} m",
-                          annotation_position="top left")
-        fig_dep.add_hline(y=min_depth, line=dict(color='orange', dash='dash'),
-                          annotation_text=f"Min = {min_depth} m",
-                          annotation_position="bottom left")
+        if constraints_enabled and max_depth is not None:
+            fig_dep.add_hline(y=max_depth, line=dict(color='red', dash='dash'),
+                              annotation_text=f"Max = {max_depth} m",
+                              annotation_position="top left")
+        if constraints_enabled and min_depth is not None:
+            fig_dep.add_hline(y=min_depth, line=dict(color='orange', dash='dash'),
+                              annotation_text=f"Min = {min_depth} m",
+                              annotation_position="bottom left")
         fig_dep.update_layout(
             title='Ice Depth (Surface − Bedrock)',
             xaxis_title='Distance X (m)', yaxis_title='Depth (m)',
@@ -2445,8 +2472,8 @@ if dat_files_found > 0 and mesh_found:
             st.error(
                 f"🚨 {flags['n_above_surface']} point(s) have bedrock above "
                 "surface — this will create inverted elements! "
-                "Switch to **Enforced** mode or press "
-                "'🔨 Force-Apply Constraints' above."
+                "Enable depth constraints with **Auto-correct**, or press "
+                "'🔨 Force-Apply' above."
             )
         elif flags['n_exceeds_max'] > 0:
             if edit_mode == "Surface only (fixed bedrock)":
@@ -2454,13 +2481,14 @@ if dat_files_found > 0 and mesh_found:
                     f"⚠️ {flags['n_exceeds_max']} point(s) exceed the max depth "
                     f"of {max_depth} m. Since bedrock is **frozen**, you must "
                     "either lower the surface or switch to **Coupled** mode to "
-                    "auto-adjust the bedrock. Advisory mode allows this."
+                    "auto-adjust the bedrock. In **Warn only** mode this is "
+                    "permitted."
                 )
             else:
                 st.warning(
                     f"⚠️ {flags['n_exceeds_max']} point(s) exceed the max depth "
-                    f"of {max_depth} m. Switch to Enforced mode or press "
-                    "'🔨 Force-Apply Constraints' above to auto-correct."
+                    f"of {max_depth} m. Switch to **Auto-correct** or press "
+                    "'🔨 Force-Apply' to fix."
                 )
         elif flags['n_below_min'] > 0:
             st.warning(
@@ -2468,10 +2496,17 @@ if dat_files_found > 0 and mesh_found:
                 f"of {min_depth} m."
             )
         else:
-            st.success(
-                f"✅ All {flags['n_points']} points satisfy all constraints. "
-                f"Depth range: {flags['depth_min']:.1f}–{flags['depth_max']:.1f} m."
-            )
+            if constraints_enabled:
+                st.success(
+                    f"✅ All {flags['n_points']} points satisfy all constraints. "
+                    f"Depth range: {flags['depth_min']:.1f}–{flags['depth_max']:.1f} m."
+                )
+            else:
+                st.info(
+                    f"📐 Depth constraints are **off**. "
+                    f"Depth range: {flags['depth_min']:.1f}–{flags['depth_max']:.1f} m, "
+                    f"mean {flags['depth_mean']:.1f} m — free-modification mode."
+                )
 
         # ============================================================
         # Export Modified Profiles
