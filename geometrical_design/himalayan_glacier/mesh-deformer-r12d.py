@@ -3125,11 +3125,11 @@ if dat_files_found > 0 and mesh_found:
                         "Thickness-axis label", value="Ice Thickness (m)",
                         key="fo_hlabel")
                     fo_title_fs = st.slider(
-                        "Title font size", 10, 28, 16, key="fo_title_fs")
+                        "Title font size", 10, 55, 16, key="fo_title_fs")
                     fo_axis_fs = st.slider(
-                        "Axis label font size", 8, 20, 13, key="fo_axis_fs")
+                        "Axis label font size", 8, 50, 13, key="fo_axis_fs")
                     fo_tick_fs = st.slider(
-                        "Tick font size", 6, 18, 10, key="fo_tick_fs")
+                        "Tick font size", 6, 58, 10, key="fo_tick_fs")
                     fo_legend = st.checkbox(
                         "Show legend", value=True, key="fo_legend")
 
