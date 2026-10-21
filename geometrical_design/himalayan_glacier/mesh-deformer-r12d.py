@@ -675,12 +675,12 @@ if dat_files_found > 0 and mesh_found:
                                        key="vis_marker_opacity")
 
         with st.sidebar.expander("Axes & Grid", expanded=False):
-            axes_line_width = st.slider("Axes Line Width", 1, 5, 2, key="vis_axes_lw")
-            tick_width = st.slider("Tick Width", 1, 5, 2, key="vis_tick_w")
-            tick_length = st.slider("Tick Length", 4, 12, 6, key="vis_tick_len")
-            tick_font_size = st.slider("Tick Font Size", 8, 16, 10, key="vis_tick_fs")
-            title_font_size = st.slider("Title Font Size", 10, 22, 14, key="vis_title_fs")
-            grid_width = st.slider("Grid Line Width", 0, 3, 1, key="vis_grid_w")
+            axes_line_width = st.slider("Axes Line Width", 1, 15, 2, key="vis_axes_lw")
+            tick_width = st.slider("Tick Width", 1, 15, 2, key="vis_tick_w")
+            tick_length = st.slider("Tick Length", 4, 42, 6, key="vis_tick_len")
+            tick_font_size = st.slider("Tick Font Size", 8, 36, 10, key="vis_tick_fs")
+            title_font_size = st.slider("Title Font Size", 10, 50, 14, key="vis_title_fs")
+            grid_width = st.slider("Grid Line Width", 0, 10, 1, key="vis_grid_w")
             show_grid = st.checkbox("Show Grid", value=True, key="vis_show_grid")
 
         with st.sidebar.expander("3D Mesh Rendering", expanded=True):
