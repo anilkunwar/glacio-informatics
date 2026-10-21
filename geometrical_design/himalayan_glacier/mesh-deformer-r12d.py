@@ -962,6 +962,17 @@ if dat_files_found > 0 and mesh_found:
             'ref_width': 0.5,
             'z_ref_interval': 500,
             'thickness_ref_interval': 10,
+            # ── Max thickness marker ──
+            'show_max_thickness_marker': True,
+            'max_thickness_marker_color': 'red',
+            'max_thickness_marker_symbol': 'star',
+            'max_thickness_marker_size': 14,
+            'max_thickness_text_color': 'red',
+            'max_thickness_text_position': 'auto',   # 'auto' = smart, or specific
+            # ── Axis colors (separate for box / ticks / titles) ──
+            'axes_line_color': 'black',             # box/spine colour
+            'tick_label_color': 'black',            # tick numbers
+            'axis_title_color': 'black',             # axis title text
         }
         if style:
             stl.update(style)
@@ -1109,19 +1120,57 @@ if dat_files_found > 0 and mesh_found:
                 hovertemplate='X: %{x:.1f} m<br>H: %{y:.1f} m<extra></extra>',
             ), row=2, col=1)
 
-            # ── Max thickness star marker ──
-            i_max = int(np.argmax(ice_thickness))
-            fig.add_trace(go.Scatter(
-                x=[x_common[i_max]],
-                y=[ice_disp[i_max]],
-                mode='markers+text',
-                marker=dict(size=10, color='red', symbol='star'),
-                text=[f'{ice_thickness[i_max]:.1f} m'],
-                textposition='top center',
-                textfont=dict(size=stl['tick_font_size'], color='red'),
-                name=f'Max thickness',
-                showlegend=True,
-            ), row=2, col=1)
+            # ── Max thickness star marker (toggleable + smart position) ──
+            if stl.get('show_max_thickness_marker', True):
+                i_max = int(np.argmax(ice_thickness))
+
+                # Smart position to avoid overlap with figure boundaries.
+                # Falls back to user-specified position when not 'auto'.
+                _req_pos = stl.get('max_thickness_text_position', 'auto')
+                if _req_pos == 'auto':
+                    x_range = float(x_common[-1] - x_common[0]) \
+                        if len(x_common) > 1 else 1.0
+                    x_norm = (
+                        (float(x_common[i_max]) - float(x_common[0]))
+                        / max(x_range, 1e-9)
+                    ) if x_range > 0 else 0.5
+                    h_max_val = float(np.nanmax(ice_thickness))
+                    y_norm = (
+                        float(ice_disp[i_max]) / max(h_max_val, 1e-9)
+                    ) if h_max_val > 0 else 0.5
+
+                    # Vertical: flip down if peak is near top of panel
+                    v_pos = 'bottom' if y_norm > 0.85 else 'top'
+                    # Horizontal: push inward if peak is near an edge
+                    if x_norm > 0.85:
+                        h_pos = 'left'
+                    elif x_norm < 0.15:
+                        h_pos = 'right'
+                    else:
+                        h_pos = 'center'
+                    text_pos = f'{v_pos} {h_pos}'
+                else:
+                    text_pos = _req_pos
+
+                fig.add_trace(go.Scatter(
+                    x=[x_common[i_max]],
+                    y=[ice_disp[i_max]],
+                    mode='markers+text',
+                    marker=dict(
+                        size=stl.get('max_thickness_marker_size', 14),
+                        color=stl.get('max_thickness_marker_color', 'red'),
+                        symbol=stl.get('max_thickness_marker_symbol', 'star'),
+                        line=dict(width=1, color='darkred'),
+                    ),
+                    text=[f'{ice_thickness[i_max]:.1f} m'],
+                    textposition=text_pos,
+                    textfont=dict(
+                        size=stl['tick_font_size'],
+                        color=stl.get('max_thickness_text_color', 'red'),
+                    ),
+                    name='Max thickness',
+                    showlegend=True,
+                ), row=2, col=1)
 
             # ── Thickness reference lines ──
             if show_depth_refs:
@@ -1143,11 +1192,18 @@ if dat_files_found > 0 and mesh_found:
             gridwidth=stl['grid_width'],
             gridcolor=stl['grid_color'],
             linewidth=stl['axes_width'],
+            linecolor=stl.get('axes_line_color', 'black'),
             tickwidth=stl['tick_width'],
             ticklen=stl['tick_length'],
-            tickfont=dict(size=stl['tick_font_size']),
-            title_font=dict(size=stl['axis_title_font_size']),
-            showline=True, linecolor='black',
+            tickfont=dict(
+                size=stl['tick_font_size'],
+                color=stl.get('tick_label_color', 'black'),
+            ),
+            title_font=dict(
+                size=stl['axis_title_font_size'],
+                color=stl.get('axis_title_color', 'black'),
+            ),
+            showline=True,
             mirror=(stl['box_mode'] == 'boxed'),
             zeroline=True, zerolinewidth=1, zerolinecolor='gray',
         )
@@ -3203,6 +3259,49 @@ if dat_files_found > 0 and mesh_found:
                              "elevation panel.",
                     )
 
+                    st.markdown("**⭐ Max Thickness Marker**")
+                    fo_show_max_marker = st.checkbox(
+                        "Show max thickness marker",
+                        value=True,
+                        key="fo_show_max_marker",
+                        help="Toggle the red star + value label that marks "
+                             "the maximum ice-thickness point.",
+                    )
+                    col_mm1, col_mm2 = st.columns(2)
+                    with col_mm1:
+                        fo_max_marker_color = st.color_picker(
+                            "Marker color", "#FF0000",
+                            key="fo_max_marker_color")
+                        fo_max_marker_size = st.slider(
+                            "Marker size", 4, 30, 14, 1,
+                            key="fo_max_marker_size")
+                    with col_mm2:
+                        fo_max_text_color = st.color_picker(
+                            "Label text color", "#FF0000",
+                            key="fo_max_text_color")
+                        fo_max_marker_symbol = st.selectbox(
+                            "Marker symbol",
+                            ["star", "circle", "square", "diamond",
+                             "triangle-up", "triangle-down", "cross",
+                             "x", "hexagram"],
+                            key="fo_max_marker_symbol")
+                    fo_max_text_position = st.selectbox(
+                        "Label position",
+                        [
+                            "auto (smart — avoids boundaries)",
+                            "top center", "top left", "top right",
+                            "bottom center", "bottom left", "bottom right",
+                            "middle center", "middle left", "middle right",
+                        ],
+                        index=0,
+                        key="fo_max_text_position",
+                        help=(
+                            "Auto = the label is automatically placed on the "
+                            "opposite side (top/bottom, left/right) from the "
+                            "figure edge to avoid overlap with boundaries."
+                        ),
+                    )
+
                 with fo_d:
                     st.markdown("**📐 Axes, Box & Figure Size**")
                     fo_axes_w = st.slider(
@@ -3222,6 +3321,28 @@ if dat_files_found > 0 and mesh_found:
                         "Tick length", 2, 15, 6, key="fo_tick_len")
                     fo_nticks = st.slider(
                         "X tick count (0 = auto)", 0, 20, 0, key="fo_nticks")
+
+                    st.markdown("**🎨 Axis & Tick Label Colors**")
+                    col_ac1, col_ac2, col_ac3 = st.columns(3)
+                    with col_ac1:
+                        fo_axes_line_color = st.color_picker(
+                            "Axes line color", "#000000",
+                            key="fo_axes_line_color",
+                            help="Color of the box / spine lines around "
+                                 "the plot area.")
+                    with col_ac2:
+                        fo_tick_label_color = st.color_picker(
+                            "Tick label color", "#000000",
+                            key="fo_tick_label_color",
+                            help="Color of the numeric tick labels "
+                                 "(e.g. 0, 100, 200…).")
+                    with col_ac3:
+                        fo_axis_title_color = st.color_picker(
+                            "Axis title color", "#000000",
+                            key="fo_axis_title_color",
+                            help="Color of the axis title text "
+                                 "(e.g. 'Distance X (m)').")
+
                     fo_height = st.slider(
                         "Figure height (px)", 400, 1600, 900, 50,
                         key="fo_height")
@@ -3266,6 +3387,18 @@ if dat_files_found > 0 and mesh_found:
                 'fig_width': fo_width,
                 'z_ref_interval': z_ref_m,
                 'thickness_ref_interval': thickness_contour_m,
+                'show_max_thickness_marker': fo_show_max_marker,
+                'max_thickness_marker_color': fo_max_marker_color,
+                'max_thickness_marker_symbol': fo_max_marker_symbol,
+                'max_thickness_marker_size': fo_max_marker_size,
+                'max_thickness_text_color': fo_max_text_color,
+                'max_thickness_text_position': (
+                    'auto' if fo_max_text_position.startswith('auto')
+                    else fo_max_text_position
+                ),
+                'axes_line_color': fo_axes_line_color,
+                'tick_label_color': fo_tick_label_color,
+                'axis_title_color': fo_axis_title_color,
             }
 
             # ─────────────────────────────────────────────────
