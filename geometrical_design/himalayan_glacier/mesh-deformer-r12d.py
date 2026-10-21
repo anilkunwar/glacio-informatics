@@ -820,6 +820,201 @@ if dat_files_found > 0 and mesh_found:
             figure_height = st.slider("Figure height (px)", 400, 1400, 700, 50,
                                       key="vis_fig_h")
 
+        # ════════════════════════════════════════════════════════════
+        #  📐 Publication Quality (3D Mesh) — fine-tune for print/PDF
+        # ════════════════════════════════════════════════════════════
+        with st.sidebar.expander("📐 Publication Quality (3D)", expanded=False):
+            st.caption(
+                "Fine-tune the 3D mesh figure for journals / print. "
+                "Applies to **Undeformed 3D Mesh** and **Deformed 3D Mesh** tabs."
+            )
+
+            # ── Fonts ──
+            st.markdown("**🔤 Font Family**")
+            font_family = st.selectbox(
+                "Font family",
+                [
+                    "Arial", "Helvetica", "Times New Roman", "Georgia",
+                    "Courier New", "Palatino", "Tahoma", "Verdana",
+                    "DejaVu Sans", "DejaVu Serif",
+                ],
+                index=0, key="vis_font_family",
+                help=(
+                    "Applies to title, axis labels, tick labels, and "
+                    "colorbar. Use a serif font (Times New Roman, Georgia) "
+                    "for traditional journals, or sans-serif (Arial, "
+                    "Helvetica) for modern style."
+                ),
+            )
+
+            # ── 3D Axis Colors ──
+            st.markdown("**🎨 3D Axis & Background Colors**")
+            col_3d_c1, col_3d_c2, col_3d_c3 = st.columns(3)
+            with col_3d_c1:
+                axes_3d_line_color = st.color_picker(
+                    "Axes line", "#000000", key="vis_3d_axes_line_color",
+                    help="Color of the 3D axis lines (X/Y/Z spines).")
+            with col_3d_c2:
+                tick_3d_label_color = st.color_picker(
+                    "Tick labels", "#000000", key="vis_3d_tick_label_color",
+                    help="Color of the numeric tick labels on each axis.")
+            with col_3d_c3:
+                axis_3d_title_color = st.color_picker(
+                    "Axis titles", "#000000", key="vis_3d_axis_title_color",
+                    help="Color of the axis title text (e.g. 'X (m)').")
+
+            col_3d_c4, col_3d_c5 = st.columns(2)
+            with col_3d_c4:
+                scene_bgcolor = st.color_picker(
+                    "Scene background", "#FFFFFF", key="vis_scene_bgcolor",
+                    help="Background color of the 3D plot area.")
+            with col_3d_c5:
+                grid_3d_color = st.color_picker(
+                    "3D grid lines", "#DDDDDD", key="vis_3d_grid_color",
+                    help="Color of the 3D grid lines on each plane.")
+
+            # ── Colorbar customization ──
+            st.markdown("**📊 Colorbar (applies to all 3D colorbars)**")
+            col_cb1, col_cb2 = st.columns(2)
+            with col_cb1:
+                cbar_length = st.slider(
+                    "Length (fraction)", 0.2, 1.0, 0.75, 0.05,
+                    key="vis_cbar_len",
+                    help="Fraction of plot height that the colorbar spans.")
+                cbar_title_fs = st.slider(
+                    "Title font size", 8, 30, 14, 1,
+                    key="vis_cbar_title_fs")
+            with col_cb2:
+                cbar_thickness = st.slider(
+                    "Thickness (px)", 5, 50, 20, 1,
+                    key="vis_cbar_thick",
+                    help="Pixel width of the colorbar.")
+                cbar_tick_fs = st.slider(
+                    "Tick font size", 6, 24, 10, 1,
+                    key="vis_cbar_tick_fs")
+
+            # ── Camera ──
+            st.markdown("**📷 Camera Position**")
+            col_cam1, col_cam2, col_cam3 = st.columns(3)
+            with col_cam1:
+                camera_eye_x = st.slider(
+                    "Eye X", -3.0, 3.0, 1.25, 0.05, key="vis_cam_eye_x")
+            with col_cam2:
+                camera_eye_y = st.slider(
+                    "Eye Y", -3.0, 3.0, 1.25, 0.05, key="vis_cam_eye_y")
+            with col_cam3:
+                camera_eye_z = st.slider(
+                    "Eye Z", -3.0, 3.0, 1.25, 0.05, key="vis_cam_eye_z")
+            camera_projection = st.radio(
+                "Projection",
+                ["Perspective", "Orthographic"],
+                horizontal=True, key="vis_cam_proj",
+                help=(
+                    "Orthographic removes perspective distortion — "
+                    "useful for technical / cross-section views."
+                ),
+            )
+
+            # ── Title & Margins ──
+            st.markdown("**📝 Title & Margins**")
+            show_title = st.checkbox(
+                "Show title", value=True, key="vis_show_title")
+            title_color = st.color_picker(
+                "Title color", "#000000", key="vis_title_color")
+            col_m1, col_m2 = st.columns(2)
+            with col_m1:
+                margin_l = st.slider(
+                    "Left margin", 0, 100, 0, 5, key="vis_margin_l")
+                margin_t = st.slider(
+                    "Top margin", 0, 150, 60, 5, key="vis_margin_t")
+            with col_m2:
+                margin_r = st.slider(
+                    "Right margin", 0, 100, 0, 5, key="vis_margin_r")
+                margin_b = st.slider(
+                    "Bottom margin", 0, 100, 0, 5, key="vis_margin_b")
+
+            # ── Number format ──
+            st.markdown("**🔢 Tick Number Format**")
+            tick_format = st.selectbox(
+                "Tick format",
+                [".0f", ".1f", ".2f", ".3f", ",.0f", ",.1f", "g", ".1e", ".2e"],
+                index=0, key="vis_tick_format",
+                help=(
+                    ".0f = integers · .1f = 1 decimal · ,.0f = thousands "
+                    "separator · .1e = scientific notation."
+                ),
+            )
+
+            # ── Padding & Spacing ──
+            st.markdown("**📏 Padding & Spacing (px)**")
+            st.caption(
+                "Controls the visual gaps between text elements on each axis.\n\n"
+                "⚠️ **Note:** Plotly's 3D scene axes don't natively support "
+                "`title_standoff` or `ticklabelstandoff` (only 2D axes do). "
+                "These sliders use workarounds:\n"
+                "• **Axis title → tick labels** prepends newlines to the "
+                "title text (~5 px per newline).\n"
+                "• **Tick labels → axis line** adds to the tick length, "
+                "pushing labels further from the spine.\n\n"
+                "The figure-title padding is applied directly via "
+                "`title.pad.t/b`, which IS supported."
+            )
+            col_pad1, col_pad2 = st.columns(2)
+            with col_pad1:
+                title_standoff = st.slider(
+                    "Axis title → tick labels",
+                    min_value=0, max_value=60, value=8, step=1,
+                    key="vis_title_standoff",
+                    help=(
+                        "Distance (px) between the axis title text (e.g. "
+                        "'X (m)') and the tick labels. Applied by prepending "
+                        "newline characters to the title text (~5 px per "
+                        "newline). Increase if the title sits on top of the "
+                        "numbers."
+                    ),
+                )
+                tick_label_standoff = st.slider(
+                    "Tick labels → axis line",
+                    min_value=0, max_value=40, value=4, step=1,
+                    key="vis_ticklabel_standoff",
+                    help=(
+                        "Extra distance (px) between tick labels and the axis "
+                        "line. Applied by lengthening the tick marks (`ticklen`), "
+                        "which pushes labels further from the spine. Stacks on "
+                        "top of the 'Tick Length' slider in the 'Axes & Grid' "
+                        "expander."
+                    ),
+                )
+            with col_pad2:
+                title_pad_t = st.slider(
+                    "Figure title → plot top",
+                    min_value=0, max_value=60, value=0, step=1,
+                    key="vis_title_pad_t",
+                    help=(
+                        "Padding (px) below the figure title and above "
+                        "the plot area. Increase for breathing room "
+                        "between title and 3D scene. Applied via Plotly's "
+                        "`title.pad.t`."
+                    ),
+                )
+                title_pad_b = st.slider(
+                    "Figure title → top edge",
+                    min_value=0, max_value=60, value=0, step=1,
+                    key="vis_title_pad_b",
+                    help="Padding (px) above the figure title. Applied via "
+                         "Plotly's `title.pad.b`.",
+                )
+            ticks_position = st.radio(
+                "Tick mark position",
+                ["Outside", "Inside", ""],
+                horizontal=True, key="vis_ticks_pos",
+                help=(
+                    "Outside = ticks point outward (default). "
+                    "Inside = ticks point into the plot area. "
+                    "Empty = no ticks drawn."
+                ),
+            )
+
         return {
             'colormap': colormap_name,
             'colormap_reversed': colormap_reversed,
@@ -846,6 +1041,34 @@ if dat_files_found > 0 and mesh_found:
             'top_render_style': top_render_style,
             'top_opacity': top_opacity,
             'bottom_opacity': bottom_opacity,
+            # ── Publication-quality knobs ──
+            'font_family': font_family,
+            'axes_3d_line_color': axes_3d_line_color,
+            'tick_3d_label_color': tick_3d_label_color,
+            'axis_3d_title_color': axis_3d_title_color,
+            'scene_bgcolor': scene_bgcolor,
+            'grid_3d_color': grid_3d_color,
+            'cbar_length': cbar_length,
+            'cbar_thickness': cbar_thickness,
+            'cbar_title_fs': cbar_title_fs,
+            'cbar_tick_fs': cbar_tick_fs,
+            'camera_eye_x': camera_eye_x,
+            'camera_eye_y': camera_eye_y,
+            'camera_eye_z': camera_eye_z,
+            'camera_projection': camera_projection,
+            'show_title': show_title,
+            'title_color': title_color,
+            'margin_l': margin_l,
+            'margin_r': margin_r,
+            'margin_t': margin_t,
+            'margin_b': margin_b,
+            'tick_format': tick_format,
+            # ── Padding & spacing knobs ──
+            'title_standoff': title_standoff,
+            'tick_label_standoff': tick_label_standoff,
+            'title_pad_t': title_pad_t,
+            'title_pad_b': title_pad_b,
+            'ticks_position': ticks_position,
         }
 
     def make_2d_flowline_fig(surface, bedrock, vis,
@@ -1297,6 +1520,29 @@ if dat_files_found > 0 and mesh_found:
 
         z_exag = vis.get('z_exaggeration', 1.0)
 
+        # ── Publication-quality colorbar builder ──
+        # Returns a colorbar dict using the global publication settings.
+        # Pass x_pos to override the default horizontal position.
+        def _cbar(title_text, x_pos=None):
+            _x = x_pos if x_pos is not None else 1.02
+            return dict(
+                title=title_text,
+                title_font=dict(
+                    size=vis.get('cbar_title_fs', vis['title_font_size']),
+                    color=vis.get('axis_3d_title_color', 'black'),
+                    family=vis.get('font_family', 'Arial'),
+                ),
+                tickfont=dict(
+                    size=vis.get('cbar_tick_fs', vis['tick_font_size']),
+                    color=vis.get('tick_3d_label_color', 'black'),
+                    family=vis.get('font_family', 'Arial'),
+                ),
+                len=vis.get('cbar_length', 0.75),
+                thickness=vis.get('cbar_thickness', 20),
+                x=_x,
+                tickformat=vis.get('tick_format', None),
+            )
+
         # ── Side-wall colorscale (subtle grey-brown) ──
         WALL_COLOR = [
             [0.0, 'rgb(130, 110, 90)'],
@@ -1334,12 +1580,7 @@ if dat_files_found > 0 and mesh_found:
                     color=df[z_col],
                     colorscale=colorscale,
                     opacity=vis['marker_opacity'],
-                    colorbar=dict(
-                        title='Elevation (m)',
-                        tickfont=dict(size=vis['tick_font_size']),
-                        title_font=dict(size=vis['title_font_size']),
-                        len=0.75, thickness=20,
-                    ),
+                    colorbar=_cbar('Elevation (m)'),
                 ),
                 hovertemplate=(
                     'X: %{x:.1f} m<br>Y: %{y:.1f} m<br>'
@@ -1404,13 +1645,7 @@ if dat_files_found > 0 and mesh_found:
                         colorscale=colorscale,
                         opacity=top_op,
                         showscale=top_shows_scale,
-                        colorbar=dict(
-                            title='Z surf (m)',
-                            tickfont=dict(size=vis['tick_font_size']),
-                            title_font=dict(size=vis['title_font_size']),
-                            len=0.75, thickness=20,
-                            x=1.0,
-                        ),
+                        colorbar=_cbar('Z surf (m)', x_pos=1.0),
                         name='Glacier Surface',
                         lighting=top_lighting,
                         lightposition=dict(x=0, y=0, z=1000),
@@ -1484,13 +1719,7 @@ if dat_files_found > 0 and mesh_found:
                     colorscale=bed_cscale,
                     opacity=bot_op,
                     showscale=True,
-                    colorbar=dict(
-                        title='Z bed (m)',
-                        tickfont=dict(size=vis['tick_font_size']),
-                        title_font=dict(size=vis['title_font_size']),
-                        len=0.75, thickness=20,
-                        x=bot_cbar_x,
-                    ),
+                    colorbar=_cbar('Z bed (m)', x_pos=bot_cbar_x),
                     name='Bedrock',
                     lighting=dict(
                         ambient=0.65, diffuse=0.6,
@@ -1636,12 +1865,7 @@ if dat_files_found > 0 and mesh_found:
                     colorscale=colorscale,
                     opacity=vis['marker_opacity'],
                     showscale=True,
-                    colorbar=dict(
-                        title='Elevation (m)',
-                        tickfont=dict(size=vis['tick_font_size']),
-                        title_font=dict(size=vis['title_font_size']),
-                        len=0.75, thickness=20,
-                    ),
+                    colorbar=_cbar('Elevation (m)'),
                     lighting=dict(ambient=0.55, diffuse=0.7,
                                   fresnel=0.15, specular=0.15, roughness=0.4),
                     lightposition=dict(x=0, y=0, z=1000),
@@ -1674,47 +1898,115 @@ if dat_files_found > 0 and mesh_found:
                         f"`{vis['interp_method']}` interpolation before rendering."
                     )
 
-        # ═══════════════════════════════════════════════════════════
-        #  Layout (with Z-exaggeration label)
-        # ═══════════════════════════════════════════════════════════
+        # ═════════════════════════════════════════════════════════════
+        #  Layout (publication-quality: fonts, colors, camera, margins)
+        # ═════════════════════════════════════════════════════════════
         z_axis_title = 'Elevation Z (m)'
         if z_exag != 1.0:
             z_axis_title = f'Elevation Z (m)  [×{z_exag:.1f}]'
 
-        fig.update_layout(
-            title=dict(text=title, font=dict(size=vis['title_font_size'] + 2)),
+        # Common axis configuration with publication-quality styling
+        _ff = vis.get('font_family', 'Arial')
+        _alc = vis.get('axes_3d_line_color', 'black')
+        _tlc = vis.get('tick_3d_label_color', 'black')
+        _atc = vis.get('axis_3d_title_color', 'black')
+        _gc = vis.get('grid_3d_color', '#DDDDDD')
+        _tf = vis.get('tick_format', None)
+
+        def _scene_axis(title_text):
+            # ── Workaround: 3D scene axes don't support `title_standoff`
+            # or `ticklabelstandoff` like 2D axes do. We emulate them:
+            #   • Axis-title spacing → prepend newline characters to title
+            #   • Tick-label spacing → add extra `ticklen` (longer ticks
+            #     push labels further from the axis line)
+            _title_pad = int(vis.get('title_standoff', 8))
+            if _title_pad > 0:
+                # Each newline ≈ 4-5 px of vertical space in Plotly 3D
+                _n_newlines = max(0, _title_pad // 5)
+                _padded_title = ('\n' * _n_newlines) + title_text
+            else:
+                _padded_title = title_text
+
+            _extra_ticklen = int(vis.get('tick_label_standoff', 4))
+            _ticklen = vis['tick_length'] + _extra_ticklen
+
+            ax = dict(
+                title=_padded_title,
+                title_font=dict(
+                    size=vis['title_font_size'],
+                    color=_atc,
+                    family=_ff,
+                ),
+                tickfont=dict(
+                    size=vis['tick_font_size'],
+                    color=_tlc,
+                    family=_ff,
+                ),
+                ticklen=_ticklen,
+                tickwidth=vis['tick_width'],
+                linewidth=vis['axes_line_width'],
+                linecolor=_alc,
+                showgrid=vis['show_grid'],
+                gridwidth=vis['grid_width'],
+                gridcolor=_gc,
+                showline=True,
+            )
+            # Tick mark position: outside / inside / none
+            _tp = vis.get('ticks_position', 'Outside')
+            if _tp == 'Outside':
+                ax['ticks'] = 'outside'
+            elif _tp == 'Inside':
+                ax['ticks'] = 'inside'
+            else:
+                ax['ticks'] = ''
+            if _tf:
+                ax['tickformat'] = _tf
+            return ax
+
+        _layout_kwargs = dict(
             height=vis['figure_height'],
-            margin=dict(l=0, r=0, t=60, b=0),
-            paper_bgcolor='white',
+            margin=dict(
+                l=vis.get('margin_l', 0),
+                r=vis.get('margin_r', 0),
+                t=vis.get('margin_t', 60),
+                b=vis.get('margin_b', 0),
+            ),
+            paper_bgcolor=vis.get('scene_bgcolor', 'white'),
+            font=dict(family=_ff),
             scene=dict(
-                xaxis=dict(
-                    title='X (m)',
-                    title_font=dict(size=vis['title_font_size']),
-                    tickfont=dict(size=vis['tick_font_size']),
-                    linewidth=vis['axes_line_width'],
-                    showgrid=vis['show_grid'],
-                    gridwidth=vis['grid_width'],
-                ),
-                yaxis=dict(
-                    title='Y (m)',
-                    title_font=dict(size=vis['title_font_size']),
-                    tickfont=dict(size=vis['tick_font_size']),
-                    linewidth=vis['axes_line_width'],
-                    showgrid=vis['show_grid'],
-                    gridwidth=vis['grid_width'],
-                ),
-                zaxis=dict(
-                    title=z_axis_title,
-                    title_font=dict(size=vis['title_font_size']),
-                    tickfont=dict(size=vis['tick_font_size']),
-                    linewidth=vis['axes_line_width'],
-                    showgrid=vis['show_grid'],
-                    gridwidth=vis['grid_width'],
-                ),
+                xaxis=_scene_axis('X (m)'),
+                yaxis=_scene_axis('Y (m)'),
+                zaxis=_scene_axis(z_axis_title),
                 aspectmode='data',
-                bgcolor='white',
+                bgcolor=vis.get('scene_bgcolor', 'white'),
+                camera=dict(
+                    eye=dict(
+                        x=vis.get('camera_eye_x', 1.25),
+                        y=vis.get('camera_eye_y', 1.25),
+                        z=vis.get('camera_eye_z', 1.25),
+                    ),
+                    projection=dict(
+                        type=('orthographic'
+                              if vis.get('camera_projection') == 'Orthographic'
+                              else 'perspective')
+                    ),
+                ),
             ),
         )
+        if vis.get('show_title', True):
+            _layout_kwargs['title'] = dict(
+                text=title,
+                font=dict(
+                    size=vis['title_font_size'] + 2,
+                    color=vis.get('title_color', 'black'),
+                    family=_ff,
+                ),
+                pad=dict(
+                    t=vis.get('title_pad_t', 0),
+                    b=vis.get('title_pad_b', 0),
+                ),
+            )
+        fig.update_layout(**_layout_kwargs)
         return fig
 
     # ==========================================
