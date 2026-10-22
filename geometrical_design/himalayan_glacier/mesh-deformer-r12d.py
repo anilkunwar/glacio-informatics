@@ -2160,14 +2160,22 @@ if dat_files_found > 0 and mesh_found:
 
         def _scene_axis(title_text):
             # ── Resolve 3D axis colors: auto-contrast with colormap OR manual ──
+            # ⚠️ Use distinct names (_ac_*) for the auto-contrast tuple to avoid
+            # shadowing the outer _gc / _alc / _tlc / _atc variables. Python
+            # treats any assigned name as function-local for the entire scope,
+            # so reusing `_gc` here would break the `else` branch below with
+            # "cannot access local variable '_gc' where it is not associated
+            # with a value".
             _cm = vis.get('contrast_mode', 'Manual (use color pickers below)')
             if 'colormap' in _cm.lower():
                 _cscale_name = vis.get('colormap', 'Viridis')
-                _al, _tl, _at, _gc = _auto_contrast_colors(
+                _ac_al, _ac_tl, _ac_at, _ac_gc = _auto_contrast_colors(
                     cscale_name=_cscale_name,
                     bg_color=vis.get('scene_bgcolor', 'white'),
                 )
-                _alc_use, _tlc_use, _atc_use, _gc_use = _al, _tl, _at, _gc
+                _alc_use, _tlc_use, _atc_use, _gc_use = (
+                    _ac_al, _ac_tl, _ac_at, _ac_gc
+                )
             else:
                 _alc_use = _alc
                 _tlc_use = _tlc
