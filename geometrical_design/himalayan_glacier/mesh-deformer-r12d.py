@@ -616,6 +616,69 @@ if dat_files_found > 0 and mesh_found:
         valid = base in COLORSCALES
         return candidate, valid
 
+    # ══════════════════════════════════════════════════════════════
+    #  Contrast-color helpers — compute axis/tick/title colors that
+    #  contrast with either the colormap (3D) or the background (2D).
+    # ══════════════════════════════════════════════════════════════
+    def _hex_to_rgb(h):
+        """Convert '#RRGGBB' or 'RRGGBB' to (r, g, b) ints."""
+        h = h.lstrip('#')
+        if len(h) == 3:
+            h = ''.join(c * 2 for c in h)
+        return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+    def _rgb_to_luminance(r, g, b):
+        """Relative luminance (0-255) using ITU-R BT.601 weights."""
+        return 0.299 * r + 0.587 * g + 0.114 * b
+
+    def _get_colormap_brightness(cscale_name):
+        """Sample a Plotly built-in colorscale and return average luminance.
+
+        Returns 128 (medium gray) if the colorscale can't be resolved.
+        """
+        try:
+            import plotly.colors as pc
+            scales = getattr(pc, 'PLOTLY_SCALES', None) or {}
+            cs = scales.get(cscale_name, [])
+            if not cs:
+                return 128.0
+            total_lum = 0.0
+            count = 0
+            for _, color_str in cs:
+                color_str = color_str.strip()
+                if color_str.startswith('rgb'):
+                    parts = (color_str
+                             .replace('rgb(', '').replace('rgba(', '')
+                             .replace(')', '').split(','))
+                    r, g, b = [int(float(p.strip())) for p in parts[:3]]
+                elif color_str.startswith('#'):
+                    r, g, b = _hex_to_rgb(color_str)
+                else:
+                    continue
+                total_lum += _rgb_to_luminance(r, g, b)
+                count += 1
+            return total_lum / max(count, 1)
+        except Exception:
+            return 128.0
+
+    def _auto_contrast_colors(cscale_name=None, bg_color='#FFFFFF'):
+        """Return (axes, tick, title, grid) colors that contrast with
+        the colormap (3D) or background (2D).
+
+        If ``cscale_name`` is provided, contrast against the colormap's
+        average brightness. Otherwise contrast against ``bg_color``.
+        """
+        if cscale_name:
+            ref_lum = _get_colormap_brightness(cscale_name)
+        else:
+            r, g, b = _hex_to_rgb(bg_color)
+            ref_lum = _rgb_to_luminance(r, g, b)
+
+        if ref_lum > 140:  # bright reference → dark text
+            return ('#1A1A1A', '#333333', '#000000', '#CCCCCC')
+        else:               # dark reference → light text
+            return ('#E8E8E8', '#CCCCCC', '#FFFFFF', '#555555')
+
     def grid_from_xyz(df, x_col, y_col, z_col, reduce='top', interp_method='cubic'):
         """Convert a long-form (X, Y, Z) table into a regular grid."""
         if reduce == 'top':
@@ -819,6 +882,111 @@ if dat_files_found > 0 and mesh_found:
         with st.sidebar.expander("Figure Size", expanded=False):
             figure_height = st.slider("Figure height (px)", 400, 1400, 700, 50,
                                       key="vis_fig_h")
+
+        # ════════════════════════════════════════════════════════════
+        #  🏷️ Legend & Contrast Colors — applies to ALL figures (2D + 3D)
+        # ════════════════════════════════════════════════════════════
+        with st.sidebar.expander("🏷️ Legend & Contrast Colors", expanded=False):
+            st.caption(
+                "Legend visibility / spacing and automatic contrast colors "
+                "for axes, tick labels, and axis titles. Applies to **all** "
+                "figures (2D flowline, modified profiles, elevation angles, "
+                "and 3D mesh)."
+            )
+
+            # ── Legend controls ──
+            st.markdown("**🏷️ Legend (2D figures)**")
+            show_legend_2d = st.checkbox(
+                "Show legend", value=True, key="vis_show_legend_2d",
+                help="Toggle the legend on/off for 1D Flowline, Modified "
+                     "Profiles, and Elevation Angles figures.",
+            )
+            legend_y_offset = st.slider(
+                "Legend gap above axes box",
+                min_value=1.00, max_value=1.30, value=1.02, step=0.01,
+                key="vis_legend_y_offset",
+                help=(
+                    "Vertical position of the legend relative to the plot "
+                    "area (1.00 = touching the top edge, 1.30 = well above). "
+                    "Increase for more breathing room between the legend and "
+                    "the axes box."
+                ),
+            )
+            legend_orientation = st.radio(
+                "Legend orientation",
+                ["Horizontal (above plot)", "Vertical (right side)"],
+                horizontal=True, key="vis_legend_orient",
+                help="Horizontal = legend sits above the plot; Vertical = "
+                     "legend sits to the right.",
+            )
+
+            # ── Contrast colors ──
+            st.markdown("**🎨 Contrast Colors (all figures)**")
+            contrast_mode = st.radio(
+                "Color mode",
+                ["Manual (use color pickers below)",
+                 "Auto-contrast with colormap (3D)",
+                 "Auto-contrast with background (2D)"],
+                index=0, key="vis_contrast_mode",
+                help=(
+                    "• **Manual** — use the axis/tick/title color pickers "
+                    "in the Publication Quality sections above/below.\n"
+                    "• **Auto (colormap)** — 3D axes/ticks automatically "
+                    "switch to dark or light depending on the colormap's "
+                    "average brightness.\n"
+                    "• **Auto (background)** — 2D axes/ticks automatically "
+                    "switch to dark or light depending on the plot background."
+                ),
+            )
+            contrast_threshold = st.slider(
+                "Brightness threshold",
+                min_value=80, max_value=200, value=140, step=5,
+                key="vis_contrast_threshold",
+                help=(
+                    "Luminance cutoff (0-255). If the colormap/background "
+                    "brightness exceeds this value, dark axis colors are used; "
+                    "otherwise light colors. Lower → more likely to use dark "
+                    "text; higher → more likely to use light text."
+                ),
+            )
+
+            # Show preview of auto-contrast result
+            if contrast_mode != "Manual (use color pickers below)":
+                _preview_cscale = colormap_name
+                _preview_bg = '#FFFFFF'
+                _clum = (_get_colormap_brightness(_preview_cscale)
+                         if 'colormap' in contrast_mode.lower()
+                         else _rgb_to_luminance(*_hex_to_rgb(_preview_bg)))
+                _is_bright = _clum > contrast_threshold
+                _ac = _auto_contrast_colors(
+                    cscale_name=_preview_cscale if 'colormap' in contrast_mode.lower() else None,
+                    bg_color=_preview_bg,
+                )
+                _mode_label = 'dark' if _is_bright else 'light'
+                st.info(
+                    f"📊 Colormap/background brightness: **{_clum:.0f}/255** "
+                    f"(→ {_mode_label} → using "
+                    f"`{_ac[2]}` for titles, `{_ac[1]}` for ticks)"
+                )
+
+            # ── 2D axis colors (used when Manual mode) ──
+            st.markdown("**🎨 2D Axis Colors (manual mode)**")
+            col_2d_a, col_2d_b, col_2d_c = st.columns(3)
+            with col_2d_a:
+                axes_2d_line_color = st.color_picker(
+                    "2D axes line", "#000000", key="vis_2d_axes_line_color",
+                    help="Color of the box/spine lines in 2D figures.")
+            with col_2d_b:
+                tick_2d_label_color = st.color_picker(
+                    "2D tick labels", "#000000", key="vis_2d_tick_label_color",
+                    help="Color of the numeric tick labels in 2D figures.")
+            with col_2d_c:
+                axis_2d_title_color = st.color_picker(
+                    "2D axis titles", "#000000", key="vis_2d_axis_title_color",
+                    help="Color of the axis title text in 2D figures.")
+            legend_font_color_2d = st.color_picker(
+                "Legend text color", "#000000", key="vis_legend_font_color_2d",
+                help="Color of the legend text in 2D figures.")
 
         # ════════════════════════════════════════════════════════════
         #  📐 Publication Quality (3D Mesh) — fine-tune for print/PDF
@@ -1069,6 +1237,16 @@ if dat_files_found > 0 and mesh_found:
             'title_pad_t': title_pad_t,
             'title_pad_b': title_pad_b,
             'ticks_position': ticks_position,
+            # ── Legend & contrast knobs ──
+            'show_legend_2d': show_legend_2d,
+            'legend_y_offset': legend_y_offset,
+            'legend_orientation': legend_orientation,
+            'contrast_mode': contrast_mode,
+            'contrast_threshold': contrast_threshold,
+            'axes_2d_line_color': axes_2d_line_color,
+            'tick_2d_label_color': tick_2d_label_color,
+            'axis_2d_title_color': axis_2d_title_color,
+            'legend_font_color_2d': legend_font_color_2d,
         }
 
     def make_2d_flowline_fig(surface, bedrock, vis,
@@ -1096,18 +1274,52 @@ if dat_files_found > 0 and mesh_found:
                         opacity=vis['marker_opacity']),
             hovertemplate='X: %{x:.1f} m<br>Z: %{y:.1f} m<extra></extra>',
         ))
+
+        # ── Resolve axis colors (manual or auto-contrast with background) ──
+        _cm = vis.get('contrast_mode', 'Manual (use color pickers below)')
+        if 'background' in _cm.lower():
+            _bg = '#FFFFFF'
+            _al, _tl, _at, _gc = _auto_contrast_colors(cscale_name=None,
+                                                       bg_color=_bg)
+            _axes_lc, _tick_lc, _title_lc, _grid_c = _al, _tl, _at, _gc
+        else:
+            _axes_lc = vis.get('axes_2d_line_color', '#000000')
+            _tick_lc = vis.get('tick_2d_label_color', '#000000')
+            _title_lc = vis.get('axis_2d_title_color', '#000000')
+            _grid_c = 'lightgray'
+
         axis_cfg = dict(
             showgrid=vis['show_grid'],
             gridwidth=vis['grid_width'],
-            gridcolor='lightgray',
+            gridcolor=_grid_c,
             linewidth=vis['axes_line_width'],
+            linecolor=_axes_lc,
             tickwidth=vis['tick_width'],
             ticklen=vis['tick_length'],
-            tickfont=dict(size=vis['tick_font_size']),
-            title_font=dict(size=vis['title_font_size']),
-            showline=True, linecolor='black', mirror=True,
+            tickfont=dict(size=vis['tick_font_size'], color=_tick_lc),
+            title_font=dict(size=vis['title_font_size'], color=_title_lc),
+            showline=True, mirror=True,
             zeroline=True, zerolinewidth=1, zerolinecolor='gray',
         )
+
+        # ── Legend config ──
+        _show_leg = vis.get('show_legend_2d', True)
+        _leg_y = vis.get('legend_y_offset', 1.02)
+        _leg_orient = vis.get('legend_orientation', 'Horizontal (above plot)')
+        _leg_font_c = vis.get('legend_font_color_2d', '#000000')
+        if 'Vertical' in _leg_orient:
+            _legend = dict(
+                orientation='v', yanchor='top', y=1.0,
+                xanchor='left', x=1.02,
+                font=dict(size=vis['tick_font_size'], color=_leg_font_c),
+            )
+        else:
+            _legend = dict(
+                orientation='h', yanchor='bottom', y=_leg_y,
+                xanchor='right', x=1,
+                font=dict(size=vis['tick_font_size'], color=_leg_font_c),
+            )
+
         fig.update_layout(
             title=dict(text='1D Flowline Profiles',
                        font=dict(size=vis['title_font_size'] + 2)),
@@ -1115,9 +1327,8 @@ if dat_files_found > 0 and mesh_found:
             yaxis_title='Elevation Z (m)',
             xaxis=axis_cfg, yaxis=axis_cfg,
             height=vis['figure_height'],
-            legend=dict(orientation='h', yanchor='bottom', y=1.02,
-                        xanchor='right', x=1,
-                        font=dict(size=vis['tick_font_size'])),
+            showlegend=_show_leg,
+            legend=_legend,
             plot_bgcolor='white', paper_bgcolor='white',
             hovermode='x unified',
             margin=dict(l=60, r=30, t=60, b=50),
@@ -1487,17 +1698,51 @@ if dat_files_found > 0 and mesh_found:
             hovertemplate='X: %{x:.1f} m<br>θ: %{y:.3f}°<extra></extra>',
         ))
         fig.add_hline(y=0, line=dict(color='black', width=1, dash='dot'))
+
+        # ── Resolve axis colors (manual or auto-contrast with background) ──
+        _cm = vis.get('contrast_mode', 'Manual (use color pickers below)')
+        if 'background' in _cm.lower():
+            _bg = '#FFFFFF'
+            _al, _tl, _at, _gc = _auto_contrast_colors(cscale_name=None,
+                                                       bg_color=_bg)
+            _axes_lc, _tick_lc, _title_lc, _grid_c = _al, _tl, _at, _gc
+        else:
+            _axes_lc = vis.get('axes_2d_line_color', '#000000')
+            _tick_lc = vis.get('tick_2d_label_color', '#000000')
+            _title_lc = vis.get('axis_2d_title_color', '#000000')
+            _grid_c = 'lightgray'
+
         axis_cfg = dict(
             showgrid=vis['show_grid'],
             gridwidth=vis['grid_width'],
-            gridcolor='lightgray',
+            gridcolor=_grid_c,
             linewidth=vis['axes_line_width'],
+            linecolor=_axes_lc,
             tickwidth=vis['tick_width'],
             ticklen=vis['tick_length'],
-            tickfont=dict(size=vis['tick_font_size']),
-            title_font=dict(size=vis['title_font_size']),
-            showline=True, linecolor='black', mirror=True,
+            tickfont=dict(size=vis['tick_font_size'], color=_tick_lc),
+            title_font=dict(size=vis['title_font_size'], color=_title_lc),
+            showline=True, mirror=True,
         )
+
+        # ── Legend config ──
+        _show_leg = vis.get('show_legend_2d', True)
+        _leg_y = vis.get('legend_y_offset', 1.02)
+        _leg_orient = vis.get('legend_orientation', 'Horizontal (above plot)')
+        _leg_font_c = vis.get('legend_font_color_2d', '#000000')
+        if 'Vertical' in _leg_orient:
+            _legend = dict(
+                orientation='v', yanchor='top', y=1.0,
+                xanchor='left', x=1.02,
+                font=dict(size=vis['tick_font_size'], color=_leg_font_c),
+            )
+        else:
+            _legend = dict(
+                orientation='h', yanchor='bottom', y=_leg_y,
+                xanchor='right', x=1,
+                font=dict(size=vis['tick_font_size'], color=_leg_font_c),
+            )
+
         fig.update_layout(
             title=dict(text='Net Elevation Angle (Slope) along X-axis',
                        font=dict(size=vis['title_font_size'] + 2)),
@@ -1505,8 +1750,8 @@ if dat_files_found > 0 and mesh_found:
             yaxis_title='Slope Angle (Degrees)',
             xaxis=axis_cfg, yaxis=axis_cfg,
             height=vis['figure_height'],
-            legend=dict(orientation='h', yanchor='bottom', y=1.02,
-                        xanchor='right', x=1),
+            showlegend=_show_leg,
+            legend=_legend,
             plot_bgcolor='white', paper_bgcolor='white',
             hovermode='x unified',
             margin=dict(l=60, r=30, t=60, b=50),
@@ -1914,6 +2159,21 @@ if dat_files_found > 0 and mesh_found:
         _tf = vis.get('tick_format', None)
 
         def _scene_axis(title_text):
+            # ── Resolve 3D axis colors: auto-contrast with colormap OR manual ──
+            _cm = vis.get('contrast_mode', 'Manual (use color pickers below)')
+            if 'colormap' in _cm.lower():
+                _cscale_name = vis.get('colormap', 'Viridis')
+                _al, _tl, _at, _gc = _auto_contrast_colors(
+                    cscale_name=_cscale_name,
+                    bg_color=vis.get('scene_bgcolor', 'white'),
+                )
+                _alc_use, _tlc_use, _atc_use, _gc_use = _al, _tl, _at, _gc
+            else:
+                _alc_use = _alc
+                _tlc_use = _tlc
+                _atc_use = _atc
+                _gc_use = _gc
+
             # ── Workaround: 3D scene axes don't support `title_standoff`
             # or `ticklabelstandoff` like 2D axes do. We emulate them:
             #   • Axis-title spacing → prepend newline characters to title
@@ -1934,21 +2194,21 @@ if dat_files_found > 0 and mesh_found:
                 title=_padded_title,
                 title_font=dict(
                     size=vis['title_font_size'],
-                    color=_atc,
+                    color=_atc_use,
                     family=_ff,
                 ),
                 tickfont=dict(
                     size=vis['tick_font_size'],
-                    color=_tlc,
+                    color=_tlc_use,
                     family=_ff,
                 ),
                 ticklen=_ticklen,
                 tickwidth=vis['tick_width'],
                 linewidth=vis['axes_line_width'],
-                linecolor=_alc,
+                linecolor=_alc_use,
                 showgrid=vis['show_grid'],
                 gridwidth=vis['grid_width'],
-                gridcolor=_gc,
+                gridcolor=_gc_use,
                 showline=True,
             )
             # Tick mark position: outside / inside / none
